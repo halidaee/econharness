@@ -28,6 +28,25 @@ MANUAL_STEP_PATTERNS = [
 SCRIPT_SUFFIXES = {".py", ".R", ".r", ".qmd", ".sh", ".md", ".txt", ".do"}
 CODE_SUFFIXES = {".py", ".R", ".r", ".sh"}
 PAPER_SUFFIXES = {".qmd", ".Rmd", ".rmd", ".tex", ".md"}
+MERGE_PATTERNS = [
+    re.compile(r"\.merge\s*\("),
+    re.compile(r"\bpd\.merge\s*\("),
+    re.compile(r"\bleft_join\s*\("),
+    re.compile(r"\bright_join\s*\("),
+    re.compile(r"\binner_join\s*\("),
+    re.compile(r"\bfull_join\s*\("),
+    re.compile(r"\bmerge\s+[0-9m:]+\s+.+\s+using\b", re.IGNORECASE),
+    re.compile(r"\bjoinby\b", re.IGNORECASE),
+]
+SAMPLE_PATTERNS = [
+    re.compile(r"\bfilter\s*\("),
+    re.compile(r"\bsubset\s*\("),
+    re.compile(r"\bdrop if\b", re.IGNORECASE),
+    re.compile(r"\bkeep if\b", re.IGNORECASE),
+    re.compile(r"\banalysis_sample\b"),
+    re.compile(r"\bsample_flag\b"),
+    re.compile(r"\beligible\s*=="),
+]
 
 
 def make_finding(
@@ -283,22 +302,33 @@ def detect_path_portability(project_root: Path, files: list[Path]) -> list[Findi
                 )
                 found_issue = True
                 break
-        if found_issue:
-            continue
-        for hint in MACHINE_SPECIFIC_HINTS:
-            if hint in text:
-                findings.append(
-                    make_finding(
-                        dimension="path_portability",
-                        severity="medium",
-                        title="Machine-specific storage path referenced",
-                        detail=f"{rel} references a machine-specific location such as `{hint}`.",
-                        remediation="Replace user-specific storage references with project-root-relative paths.",
-                        score_impact=7,
-                        path=rel,
+        if not found_issue:
+            for hint in MACHINE_SPECIFIC_HINTS:
+                if hint in text:
+                    findings.append(
+                        make_finding(
+                            dimension="path_portability",
+                            severity="medium",
+                            title="Machine-specific storage path referenced",
+                            detail=f"{rel} references a machine-specific location such as `{hint}`.",
+                            remediation="Replace user-specific storage references with project-root-relative paths.",
+                            score_impact=7,
+                            path=rel,
+                        )
                     )
+                    break
+        if path.suffix == ".do" and re.search(r"^\s*cd\s+[\"']", text, flags=re.MULTILINE):
+            findings.append(
+                make_finding(
+                    dimension="path_portability",
+                    severity="medium",
+                    title="Stata script changes directory explicitly",
+                    detail=f"{rel} uses `cd`, which often bakes machine-specific project-root assumptions into the workflow.",
+                    remediation="Resolve project paths from a declared root or config instead of changing directories inside `.do` files.",
+                    score_impact=6,
+                    path=rel,
                 )
-                break
+            )
     return findings
 
 
@@ -338,6 +368,62 @@ def detect_artifact_traceability(project_root: Path, config: dict, files: list[P
     return findings
 
 
+def detect_paper_source_leakage(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    artifacts = config.get("artifacts", {})
+    declared = set(artifacts.get("tables", [])) | set(artifacts.get("figures", []))
+    raw_rel = str(config.get("paths", {}).get("raw", "")).strip().strip("/")
+    derived_rel = str(config.get("paths", {}).get("derived", "")).strip().strip("/")
+    paper_files = [path for path in files if path.suffix in {".qmd", ".Rmd", ".rmd", ".tex"}]
+    for path in paper_files:
+        rel = path.relative_to(project_root).as_posix()
+        text = _read_text(path)
+        if raw_rel and f"{raw_rel}/" in text:
+            findings.append(
+                make_finding(
+                    dimension="artifact_traceability",
+                    severity="high",
+                    title="Paper references non-output artifacts directly",
+                    detail=f"{rel} references the raw-data path `{raw_rel}/` directly.",
+                    remediation="Make the paper consume declared final outputs instead of raw or intermediate files.",
+                    score_impact=14,
+                    path=rel,
+                )
+            )
+            continue
+        if derived_rel and f"{derived_rel}/" in text:
+            findings.append(
+                make_finding(
+                    dimension="artifact_traceability",
+                    severity="high",
+                    title="Paper references non-output artifacts directly",
+                    detail=f"{rel} references the derived-data path `{derived_rel}/` directly.",
+                    remediation="Make the paper consume declared final outputs instead of intermediate files.",
+                    score_impact=14,
+                    path=rel,
+                )
+            )
+            continue
+        references = re.findall(r"([A-Za-z0-9_./-]+\.(?:csv|png|pdf|tex))", text)
+        for reference in references:
+            if reference in declared:
+                continue
+            if reference.startswith("output/"):
+                findings.append(
+                    make_finding(
+                        dimension="artifact_traceability",
+                        severity="medium",
+                        title="Paper references undeclared output artifact",
+                        detail=f"{rel} references `{reference}`, which is not declared in `.econharness.yml`.",
+                        remediation="Declare the artifact or remove the stale paper reference.",
+                        score_impact=7,
+                        path=rel,
+                    )
+                )
+                break
+    return findings
+
+
 def detect_relational_data(project_root: Path, config: dict) -> list[Finding]:
     findings: list[Finding] = []
     datasets = config.get("datasets", [])
@@ -373,6 +459,19 @@ def detect_relational_data(project_root: Path, config: dict) -> list[Finding]:
                 )
             )
             continue
+        parents = dataset.get("parents", [])
+        if stage in {"derived", "build"} and isinstance(parents, list) and len(parents) >= 3:
+            findings.append(
+                make_finding(
+                    dimension="relational_data_discipline",
+                    severity="medium",
+                    title="Early merged dataset has many upstream parents",
+                    detail=f"Dataset `{name}` is declared at stage `{stage}` with {len(parents)} parents, which suggests a wide merged working file early in the pipeline.",
+                    remediation="Keep transformed tables normalized longer and merge late into a final analysis dataset where possible.",
+                    score_impact=9,
+                    path=path_value or name,
+                )
+            )
         if not path_value:
             continue
         path = project_root / path_value
@@ -420,6 +519,64 @@ def detect_relational_data(project_root: Path, config: dict) -> list[Finding]:
                     path=path_value,
                 )
             )
+    return findings
+
+
+def detect_merge_workflow(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    analysis_rel = str(config.get("paths", {}).get("analysis", "")).strip().strip("/")
+    for path in files:
+        if path.suffix not in {".py", ".R", ".r", ".do"}:
+            continue
+        rel = path.relative_to(project_root).as_posix()
+        if analysis_rel and not rel.startswith(f"{analysis_rel}/") and rel != analysis_rel:
+            continue
+        text = _read_text(path)
+        merge_count = sum(len(pattern.findall(text)) for pattern in MERGE_PATTERNS)
+        if merge_count >= 2:
+            findings.append(
+                make_finding(
+                    dimension="relational_data_discipline",
+                    severity="medium",
+                    title="Analysis script performs repeated merges",
+                    detail=f"{rel} contains {merge_count} merge/join operations in the analysis stage.",
+                    remediation="Push data construction into earlier build stages and keep analysis scripts closer to final estimation or output production.",
+                    score_impact=8,
+                    path=rel,
+                )
+            )
+    return findings
+
+
+def detect_sample_construction_drift(project_root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    line_locations: defaultdict[str, set[str]] = defaultdict(set)
+    for path in files:
+        if path.suffix not in {".py", ".R", ".r", ".do"}:
+            continue
+        rel = path.relative_to(project_root).as_posix()
+        for raw_line in _read_text(path).splitlines():
+            line = raw_line.strip()
+            if len(line) < 15:
+                continue
+            if not any(pattern.search(line) for pattern in SAMPLE_PATTERNS):
+                continue
+            normalized = re.sub(r"\s+", " ", line)
+            line_locations[normalized].add(rel)
+    repeated = [(line, locations) for line, locations in line_locations.items() if len(locations) > 1]
+    if repeated:
+        line, locations = sorted(repeated, key=lambda item: (-len(item[1]), item[0]))[0]
+        findings.append(
+            make_finding(
+                dimension="software_hygiene_and_redundancy",
+                severity="medium",
+                title="Repeated sample-construction logic across scripts",
+                detail=f"The line `{line}` appears in multiple scripts: {', '.join(sorted(locations)[:3])}.",
+                remediation="Centralize or clearly stage shared sample-construction logic so inclusion rules do not drift across files.",
+                score_impact=8,
+                path=sorted(locations)[0],
+            )
+        )
     return findings
 
 

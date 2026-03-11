@@ -25,7 +25,12 @@
       "path": "data/working.csv",
       "stage": "derived",
       "unit": "firm_year",
-      "primary_key": ["firm_id", "year"]
+      "primary_key": ["firm_id", "year"],
+      "parents": [
+        "data/raw_a.csv",
+        "data/raw_b.csv",
+        "data/raw_c.csv"
+      ]
     }
   ],
   "artifacts": {

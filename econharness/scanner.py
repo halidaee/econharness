@@ -12,9 +12,12 @@ from econharness.detectors import (
     detect_environment_reproducibility,
     detect_heavy_stage_smoke_gaps,
     detect_manual_steps,
+    detect_merge_workflow,
+    detect_paper_source_leakage,
     detect_path_portability,
     detect_raw_data_writes,
     detect_relational_data,
+    detect_sample_construction_drift,
     detect_software_hygiene,
     iter_project_files,
 )
@@ -35,7 +38,10 @@ def scan_project(project_root: Path) -> ScanResult:
     findings.extend(detect_environment_reproducibility(project_root, config, files))
     findings.extend(detect_path_portability(project_root, files))
     findings.extend(detect_artifact_traceability(project_root, config, files))
+    findings.extend(detect_paper_source_leakage(project_root, config, files))
     findings.extend(detect_relational_data(project_root, config))
+    findings.extend(detect_merge_workflow(project_root, config, files))
+    findings.extend(detect_sample_construction_drift(project_root, files))
     findings.extend(detect_software_hygiene(project_root, files))
     findings.sort(key=lambda finding: ({"high": 0, "medium": 1, "low": 2}.get(finding.severity, 9), -finding.score_impact, finding.id))
     dimension_scores, overall_score = compute_scores(findings)

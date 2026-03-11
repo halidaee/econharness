@@ -3,4 +3,4 @@ title: "Bad Project"
 format: html
 ---
 
-This paper mentions outputs but does not actually use the declared figure.
+This paper pulls directly from `data/working.csv` and references `output/appendix_table.csv`.

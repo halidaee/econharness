@@ -41,6 +41,15 @@ class HarnessTests(unittest.TestCase):
         titles = {finding.title for finding in bad.findings}
         self.assertIn("Code appears to write into raw-data paths", titles)
 
+    def test_research_workflow_specific_findings_are_detected(self) -> None:
+        bad = scan_project(FIXTURES / "bad_project")
+        titles = {finding.title for finding in bad.findings}
+        self.assertIn("Early merged dataset has many upstream parents", titles)
+        self.assertIn("Analysis script performs repeated merges", titles)
+        self.assertIn("Repeated sample-construction logic across scripts", titles)
+        self.assertIn("Paper references non-output artifacts directly", titles)
+        self.assertIn("Stata script changes directory explicitly", titles)
+
     def test_scan_command_persists_state(self) -> None:
         project = FIXTURES / "good_project"
         result = subprocess.run(
