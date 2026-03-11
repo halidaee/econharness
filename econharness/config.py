@@ -35,6 +35,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "r": {"manager": "renv", "lockfiles": ["renv.lock"]},
         "python": {"manager": "pixi", "lockfiles": ["pixi.lock"]},
     },
+    "scorecard": {
+        "generate": True,
+        "svg_path": ".econharness/scorecard.svg",
+        "html_path": ".econharness/scorecard.html",
+    },
     "conventions": {
         "authoritative_pipeline": True,
         "allow_notebooks": True,

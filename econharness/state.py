@@ -46,3 +46,14 @@ def findings_from_state(project_root: Path) -> list[Finding]:
     for item in state.get("findings", []):
         findings.append(Finding(**item))
     return findings
+
+
+def scan_result_from_state(state: dict[str, Any]) -> ScanResult:
+    findings = [Finding(**item) for item in state.get("findings", [])]
+    return ScanResult(
+        project_root=state["project_root"],
+        findings=findings,
+        dimension_scores=state.get("dimension_scores", {}),
+        overall_score=float(state.get("overall_score", 0.0)),
+        summary=state.get("summary", {}),
+    )

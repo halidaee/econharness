@@ -62,6 +62,8 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         state_path = project / ".econharness" / "state.json"
         self.assertTrue(state_path.exists())
+        self.assertTrue((project / ".econharness" / "scorecard.svg").exists())
+        self.assertTrue((project / ".econharness" / "scorecard.html").exists())
         payload = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertIn("overall_score", payload)
 
@@ -86,6 +88,32 @@ class HarnessTests(unittest.TestCase):
         )
         self.assertEqual(full.returncode, 0, full.stderr)
         self.assertIn("FULL_OK", full.stdout)
+
+    def test_scorecard_command_supports_custom_paths(self) -> None:
+        project = FIXTURES / "good_project"
+        svg_path = project / ".econharness" / "custom-scorecard.svg"
+        html_path = project / ".econharness" / "custom-scorecard.html"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "econharness",
+                "scorecard",
+                "--path",
+                str(project),
+                "--svg-path",
+                str(svg_path),
+                "--html-path",
+                str(html_path),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(svg_path.exists())
+        self.assertTrue(html_path.exists())
 
 
 if __name__ == "__main__":

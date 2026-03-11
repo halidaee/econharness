@@ -8,7 +8,8 @@ from pathlib import Path
 
 from econharness.config import config_path_for, render_default_config
 from econharness.scanner import scan_project
-from econharness.state import findings_from_state, load_state, save_scan_result
+from econharness.scorecard import generate_scorecard
+from econharness.state import findings_from_state, load_state, save_scan_result, scan_result_from_state
 from econharness.verify import verify_project
 
 
@@ -77,6 +78,11 @@ def create_parser() -> argparse.ArgumentParser:
     review = subparsers.add_parser("review", help="Emit a heuristic research-structure review summary")
     review.add_argument("--path", default=".")
 
+    scorecard = subparsers.add_parser("scorecard", help="Generate an SVG and HTML scorecard from scan state")
+    scorecard.add_argument("--path", default=".")
+    scorecard.add_argument("--svg-path")
+    scorecard.add_argument("--html-path")
+
     return parser
 
 
@@ -92,7 +98,10 @@ def main() -> None:
     if args.command == "scan":
         result = scan_project(project_root)
         save_scan_result(project_root, result)
+        svg_path, html_path = generate_scorecard(result, project_root)
         _print_scan(result)
+        print(f"Scorecard SVG: {svg_path}")
+        print(f"Scorecard HTML: {html_path}")
         return
 
     if args.command == "status":
@@ -145,4 +154,18 @@ def main() -> None:
         top = result.findings[:5]
         for finding in top:
             print(f"- {finding.title}: {finding.detail}")
+        return
+
+    if args.command == "scorecard":
+        state = load_state(project_root)
+        if not state:
+            result = scan_project(project_root)
+            save_scan_result(project_root, result)
+        else:
+            result = scan_result_from_state(state)
+        svg_path = Path(args.svg_path).resolve() if args.svg_path else None
+        html_path = Path(args.html_path).resolve() if args.html_path else None
+        written_svg, written_html = generate_scorecard(result, project_root, svg_path=svg_path, html_path=html_path)
+        print(f"Scorecard SVG: {written_svg}")
+        print(f"Scorecard HTML: {written_html}")
         return
