@@ -1,0 +1,36 @@
+{
+  "pipeline": {
+    "command": {
+      "fast": "",
+      "full": ""
+    },
+    "entrypoints": [],
+    "heavy_stages": [
+      {
+        "name": "monte_carlo"
+      }
+    ]
+  },
+  "paths": {
+    "raw": "data",
+    "derived": "data",
+    "analysis": "analysis",
+    "output": "output",
+    "paper": "paper",
+    "temp": "temp"
+  },
+  "datasets": [
+    {
+      "name": "working",
+      "path": "data/working.csv",
+      "stage": "derived",
+      "unit": "firm_year",
+      "primary_key": ["firm_id", "year"]
+    }
+  ],
+  "artifacts": {
+    "tables": ["output/table_main.csv"],
+    "figures": ["output/figure_main.png"],
+    "paper_files": ["paper/paper.qmd"]
+  }
+}

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "econharness"
+version = "0.1.0"
+description = "Gentzkow/Shapiro-oriented reproducibility harness for economics research projects"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "OpenAI Codex"}]
+dependencies = []
+
+[project.scripts]
+econharness = "econharness.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["econharness*"]

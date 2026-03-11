@@ -1,0 +1,6 @@
+---
+title: "Bad Project"
+format: html
+---
+
+This paper mentions outputs but does not actually use the declared figure.

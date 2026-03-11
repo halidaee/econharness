@@ -1,0 +1,51 @@
+{
+  "pipeline": {
+    "command": {
+      "fast": "sh scripts/verify_fast.sh",
+      "full": "sh scripts/verify_full.sh"
+    },
+    "entrypoints": [
+      "scripts/verify_fast.sh",
+      "scripts/verify_full.sh"
+    ],
+    "heavy_stages": [
+      {
+        "name": "bootstrap",
+        "smoke_command": "python3 -c \"print('bootstrap smoke')\""
+      }
+    ]
+  },
+  "paths": {
+    "raw": "raw",
+    "derived": "derived",
+    "analysis": "analysis",
+    "output": "output",
+    "paper": "paper",
+    "temp": "temp"
+  },
+  "datasets": [
+    {
+      "name": "panel",
+      "path": "derived/panel.csv",
+      "stage": "derived",
+      "unit": "firm_year",
+      "primary_key": ["firm_id", "year"],
+      "parents": ["raw/raw_input.csv"]
+    }
+  ],
+  "artifacts": {
+    "tables": ["output/table_main.csv"],
+    "figures": ["output/figure_main.png"],
+    "paper_files": ["paper/paper.qmd"]
+  },
+  "environment": {
+    "r": {
+      "manager": "renv",
+      "lockfiles": ["renv.lock"]
+    },
+    "python": {
+      "manager": "pixi",
+      "lockfiles": ["pixi.lock"]
+    }
+  }
+}

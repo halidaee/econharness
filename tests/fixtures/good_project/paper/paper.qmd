@@ -1,0 +1,6 @@
+---
+title: "Good Project"
+format: html
+---
+
+The table lives at `output/table_main.csv` and the figure at `output/figure_main.png`.
