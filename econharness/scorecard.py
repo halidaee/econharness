@@ -104,6 +104,45 @@ def _truncate(text: str, limit: int) -> str:
     return text[: limit - 1] + "..."
 
 
+def _wrap_text(text: str, limit: int) -> list[str]:
+    words = text.split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _svg_text_block(
+    x: int,
+    y: int,
+    lines: list[str],
+    *,
+    font_size: int,
+    fill: str,
+    font_family: str,
+    line_height: int,
+) -> str:
+    tspan_lines = []
+    for index, line in enumerate(lines):
+        dy = 0 if index == 0 else line_height
+        tspan_lines.append(
+            f'<tspan x="{x}" dy="{dy}">{_escape_svg(line)}</tspan>'
+        )
+    return (
+        f'<text x="{x}" y="{y}" font-size="{font_size}" fill="{fill}" '
+        f'font-family="{font_family}">{"".join(tspan_lines)}</text>'
+    )
+
+
 def scorecard_paths(project_root: Path, config: dict | None = None) -> tuple[Path, Path]:
     cfg = config or load_config(project_root)
     scorecard_cfg = cfg.get("scorecard", {})
@@ -114,43 +153,51 @@ def scorecard_paths(project_root: Path, config: dict | None = None) -> tuple[Pat
 
 def _render_svg(result: ScanResult) -> str:
     width = 1320
-    height = 1100
     score = result.overall_score
     score_color = _score_color(score)
     status_label = _score_label(score)
     today = datetime.now().strftime("%B %d, %Y")
     top_findings = _top_findings(result.findings, count=5)
-    project_label = _truncate(result.project_root, 92)
+    project_lines = _wrap_text(result.project_root, 44)
+    concern_label = _friendly_dimension_name(min(result.dimension_scores, key=result.dimension_scores.get))
 
     finding_blocks = []
-    finding_y = 286
+    findings_section_y = 340
+    findings_caption_y = 370
+    finding_y = 408
     if top_findings:
         for finding in top_findings:
             severity_color = SEVERITY_COLORS.get(finding.severity, PALETTE["slate"])
             location = f" [{finding.path}]" if finding.path else ""
-            title = _truncate(finding.title + location, 82)
-            detail = _truncate(finding.remediation, 92)
+            title_lines = _wrap_text(finding.title + location, 58)
+            detail_lines = _wrap_text(finding.remediation, 76)
+            card_height = 34 + (len(title_lines) * 28) + (len(detail_lines) * 20) + 18
             finding_blocks.append(
                 f"""
-                <rect x="64" y="{finding_y - 34}" width="690" height="84" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
-                <rect x="64" y="{finding_y - 34}" width="10" height="84" rx="5" fill="{severity_color}"/>
-                <text x="96" y="{finding_y}" font-size="23" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{_escape_svg(title)}</text>
-                <text x="96" y="{finding_y + 27}" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">{_escape_svg(detail)}</text>
+                <rect x="64" y="{finding_y - 34}" width="690" height="{card_height}" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
+                <rect x="64" y="{finding_y - 34}" width="10" height="{card_height}" rx="5" fill="{severity_color}"/>
+                {_svg_text_block(96, finding_y, title_lines, font_size=23, fill=PALETTE['ink'], font_family=SERIF_STACK, line_height=28)}
+                {_svg_text_block(96, finding_y + (len(title_lines) * 28) + 2, detail_lines, font_size=15, fill=PALETTE['muted'], font_family=SANS_STACK, line_height=20)}
                 """
             )
-            finding_y += 96
+            finding_y += card_height + 12
     else:
+        card_height = 84
         finding_blocks.append(
             f"""
-            <rect x="64" y="252" width="690" height="84" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
-            <rect x="64" y="252" width="10" height="84" rx="5" fill="{PALETTE['olive']}"/>
-            <text x="96" y="286" font-size="23" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">No open findings</text>
-            <text x="96" y="313" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">The project looks structurally disciplined on the current heuristics.</text>
+            <rect x="64" y="{finding_y - 34}" width="690" height="{card_height}" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
+            <rect x="64" y="{finding_y - 34}" width="10" height="{card_height}" rx="5" fill="{PALETTE['olive']}"/>
+            <text x="96" y="{finding_y}" font-size="23" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">No open findings</text>
+            <text x="96" y="{finding_y + 27}" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">The project looks structurally disciplined on the current heuristics.</text>
             """
         )
+        finding_y += card_height + 12
+
+    findings_bottom = finding_y
 
     dimension_rows = []
-    row_y = 690
+    dimensions_section_y = max(findings_bottom + 54, 700)
+    row_y = dimensions_section_y + 38
     for dimension, dimension_score in result.dimension_scores.items():
         tone = _score_color(dimension_score)
         dimension_rows.append(
@@ -162,6 +209,10 @@ def _render_svg(result: ScanResult) -> str:
             """
         )
         row_y += 42
+    dimensions_bottom = row_y + 20
+    height = max(1100, dimensions_bottom + 44)
+    snapshot_y = 338
+    snapshot_height = 356
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="econharness scorecard">
   <rect width="{width}" height="{height}" fill="{PALETTE['paper']}"/>
@@ -186,24 +237,24 @@ def _render_svg(result: ScanResult) -> str:
   <text x="1088" y="252" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">High-severity findings</text>
   <text x="1228" y="252" text-anchor="end" font-size="24" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{result.summary.get('high_severity', 0)}</text>
 
-  <text x="64" y="340" font-size="28" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Highest-priority improvements</text>
-  <text x="64" y="370" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">The first items below are intended to guide the next changes to the repository.</text>
+  <text x="64" y="{findings_section_y}" font-size="28" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Highest-priority improvements</text>
+  <text x="64" y="{findings_caption_y}" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">The first items below are intended to guide the next changes to the repository.</text>
   {''.join(finding_blocks)}
 
-  <rect x="790" y="338" width="466" height="318" rx="12" fill="{PALETTE['panel_alt']}" stroke="{PALETTE['rule']}"/>
-  <text x="822" y="384" font-size="27" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Repository snapshot</text>
-  <text x="822" y="418" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Project</text>
-  <text x="822" y="444" font-size="15" fill="{PALETTE['ink']}" font-family="{MONO_STACK}">{_escape_svg(project_label)}</text>
-  <line x1="822" y1="468" x2="1222" y2="468" stroke="{PALETTE['rule']}" stroke-width="1"/>
-  <text x="822" y="504" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Interpretation</text>
-  <text x="822" y="532" font-size="18" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">The current score suggests {_score_phrase(score)}.</text>
-  <text x="822" y="562" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Strong scores indicate cleaner handoff to a new RA or coauthor. Lower scores usually reflect manual steps, weak path discipline, or unclear data lineage.</text>
-  <line x1="822" y1="594" x2="1222" y2="594" stroke="{PALETTE['rule']}" stroke-width="1"/>
-  <text x="822" y="630" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Primary concern area</text>
-  <text x="822" y="656" font-size="18" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{_escape_svg(_friendly_dimension_name(min(result.dimension_scores, key=result.dimension_scores.get)))}</text>
+  <rect x="790" y="{snapshot_y}" width="466" height="{snapshot_height}" rx="12" fill="{PALETTE['panel_alt']}" stroke="{PALETTE['rule']}"/>
+  <text x="822" y="{snapshot_y + 46}" font-size="27" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Repository snapshot</text>
+  <text x="822" y="{snapshot_y + 80}" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Project</text>
+  {_svg_text_block(822, snapshot_y + 106, project_lines, font_size=15, fill=PALETTE['ink'], font_family=MONO_STACK, line_height=20)}
+  <line x1="822" y1="{snapshot_y + 154}" x2="1222" y2="{snapshot_y + 154}" stroke="{PALETTE['rule']}" stroke-width="1"/>
+  <text x="822" y="{snapshot_y + 190}" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Interpretation</text>
+  {_svg_text_block(822, snapshot_y + 218, _wrap_text(f'The current score suggests {_score_phrase(score)}.', 42), font_size=18, fill=PALETTE['ink'], font_family=SERIF_STACK, line_height=24)}
+  {_svg_text_block(822, snapshot_y + 274, _wrap_text('Strong scores indicate cleaner handoff to a new RA or coauthor. Lower scores usually reflect manual steps, weak path discipline, or unclear data lineage.', 58), font_size=15, fill=PALETTE['muted'], font_family=SANS_STACK, line_height=20)}
+  <line x1="822" y1="{snapshot_y + 310}" x2="1222" y2="{snapshot_y + 310}" stroke="{PALETTE['rule']}" stroke-width="1"/>
+  <text x="822" y="{snapshot_y + 346}" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Primary concern area</text>
+  <text x="822" y="{snapshot_y + 372}" font-size="18" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{_escape_svg(concern_label)}</text>
 
-  <text x="64" y="652" font-size="28" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Dimension assessment</text>
-  <text x="64" y="682" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Each row summarizes one part of the repository workflow rather than generic engineering aesthetics.</text>
+  <text x="64" y="{dimensions_section_y}" font-size="28" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Dimension assessment</text>
+  <text x="64" y="{dimensions_section_y + 30}" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Each row summarizes one part of the repository workflow rather than generic engineering aesthetics.</text>
   {''.join(dimension_rows)}
 </svg>
 """
@@ -262,6 +313,11 @@ def _render_html(result: ScanResult, svg_markup: str) -> str:
       padding: 18px;
       box-shadow: 0 18px 40px rgba(70, 58, 44, 0.08);
     }}
+    .frame svg {{
+      width: 100%;
+      height: auto;
+      display: block;
+    }}
     h2 {{
       font-family: {SERIF_STACK};
       font-weight: 500;
@@ -315,9 +371,6 @@ def _render_html(result: ScanResult, svg_markup: str) -> str:
     @media (max-width: 980px) {{
       .grid {{
         grid-template-columns: 1fr;
-      }}
-      .frame svg {{
-        height: auto;
       }}
     }}
   </style>
