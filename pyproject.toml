@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "econharness"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Gentzkow/Shapiro-oriented reproducibility harness for economics research projects"
 readme = "README.md"
 requires-python = ">=3.11"
