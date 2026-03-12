@@ -1,14 +1,18 @@
 # econharness
 
-`econharness` is a project-checking tool for empirical economics workflows.
+`econharness` is an agent harness and project-checking tool for empirical economics workflows.
 
 It is built for the situation many economists are now in:
 
 - you use Claude Code, Codex, or another LLM agent to help write code;
 - the agent often produces useful work, but also leaves behind confusing project structure, redundant scripts, fragile paths, and undocumented steps;
-- you want a way to check whether the project still looks like a reproducible economics project rather than an accumulating pile of AI-generated fixes.
+- you want a way to check whether the project still looks like a reproducible economics project rather than an accumulating pile of AI-generated fixes;
+- you want the agent itself to have a structured way to notice those problems and work through them systematically.
 
 This repository is an early prototype of that idea.
+
+The goal is not just to help a human inspect the project after the fact.
+The goal is also to give Claude Code, Codex, or a similar agent a framework for helping the project "self-heal" over repeated passes.
 
 ## Why This Exists
 
@@ -28,6 +32,11 @@ In an economics project, the important questions are usually things like:
 `econharness` is meant to check those things first.
 
 It still keeps some ordinary software-hygiene checks, such as dead code and unused imports, because those matter in research projects too. But the center of gravity is research reproducibility, not software elegance.
+
+Another way to say it:
+
+- the agent writes and edits code;
+- `econharness` gives the agent a research-project standard to optimize toward.
 
 ## What It Tries To Catch
 
@@ -61,12 +70,12 @@ It is better to think of it as a structured project audit for research code.
 If you are new to LLM agents, the easiest mental model is:
 
 - Claude Code or Codex helps you write and edit code.
-- `econharness` checks what kind of project you now have.
+- `econharness` checks what kind of project you now have, and gives the agent a disciplined loop for improving it.
 
 That distinction matters.
 
 The agent is the thing doing work.
-The harness is the thing checking whether the work left your project in a usable state.
+The harness is the thing checking whether the work left your project in a usable state and telling the agent what to fix next.
 
 A common workflow looks like this:
 
@@ -77,6 +86,70 @@ A common workflow looks like this:
 5. run `econharness scan` again.
 
 In other words, `econharness` is meant to help you supervise agent-written code, not replace the agent.
+
+## Agent Harness Idea
+
+The project is intentionally trying to do something similar, in an economics-research context, to what tools like `desloppify` try to do for engineering codebases.
+
+The difference is the target standard.
+
+For a software-engineering harness, the north star might be:
+
+- abstraction quality;
+- modularity;
+- coupling;
+- architecture beauty.
+
+For `econharness`, the north star is more like:
+
+- one-command reproducibility;
+- no hidden manual steps;
+- clean raw/build/analysis/output separation;
+- portable paths;
+- declared environments;
+- clear handoff to an RA or coauthor;
+- less accumulated LLM junk.
+
+So the project is both:
+
+- a human-facing audit tool;
+- an agent-facing repair loop.
+
+## Instructions For Your Agent
+
+If you want Claude Code or Codex to use `econharness` as a self-healing loop, give it instructions like this:
+
+```text
+Use econharness as the project-quality harness for this repository.
+
+Your goal is not just to make the code run. Your goal is to improve the project so it looks like a reproducible empirical economics project.
+
+Default workflow:
+1. Run `python3 -m econharness scan --path .`
+2. Read the strict score, dimension breakdown, and top findings.
+3. Fix the highest-priority findings first.
+4. Prefer improvements that strengthen reproducibility, portability, stage separation, and project clarity over generic refactoring.
+5. Run `python3 -m econharness scan --path .` again after meaningful changes.
+6. Repeat until the most important findings are resolved or you hit a clear stopping point.
+
+When fixing issues, prioritize:
+- authoritative rebuild commands
+- removal of manual steps
+- raw/build/analysis/output separation
+- reproducible environments such as renv and pixi
+- portable relative paths instead of absolute paths
+- artifact traceability into the paper/output layer
+- dead code, unused imports, duplicate logic, and orphaned scripts
+
+Do not optimize for generic software-engineering elegance at the expense of transparency.
+Do not hide research logic behind unnecessary abstractions.
+Do not suppress findings just to improve the score.
+
+If you make changes, explain which econharness findings you were addressing and what changed in the score or findings afterward.
+```
+
+That prompt is deliberately simple.
+The point is to make the agent follow a repeatable discipline rather than improvising a new standard each session.
 
 ## Basic Commands
 
