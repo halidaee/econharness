@@ -41,9 +41,9 @@ SEVERITY_COLORS = {
     "low": PALETTE["slate"],
 }
 
-SERIF_STACK = "Georgia, Baskerville, 'Times New Roman', serif"
-SANS_STACK = "'Avenir Next', 'Gill Sans', 'Trebuchet MS', sans-serif"
-MONO_STACK = "Menlo, Monaco, 'Courier New', monospace"
+SERIF_STACK = "Georgia"
+SANS_STACK = "Helvetica"
+MONO_STACK = "Menlo"
 
 
 def _score_color(score: float) -> str:
@@ -91,7 +91,7 @@ def _friendly_dimension_name(key: str) -> str:
 
 
 def _escape_svg(text: str) -> str:
-    return escape(text, quote=False)
+    return escape(text, quote=False).replace("'", "&#39;")
 
 
 def _top_findings(findings: list[Finding], count: int = 4) -> list[Finding]:
@@ -119,6 +119,13 @@ def _wrap_text(text: str, limit: int) -> list[str]:
             current = word
     lines.append(current)
     return lines
+
+
+def _short_project_label(project_root: str, keep_parts: int = 4) -> str:
+    parts = Path(project_root).parts
+    if len(parts) <= keep_parts:
+        return project_root
+    return ".../" + "/".join(parts[-keep_parts:])
 
 
 def _svg_text_block(
@@ -153,56 +160,63 @@ def scorecard_paths(project_root: Path, config: dict | None = None) -> tuple[Pat
 
 def _render_svg(result: ScanResult) -> str:
     width = 1320
-    height = 1040
+    height = 1120
     score = result.overall_score
     score_color = _score_color(score)
     status_label = _score_label(score)
     today = datetime.now().strftime("%B %d, %Y")
     top_findings = _top_findings(result.findings, count=4)
-    project_label = _truncate(result.project_root, 56)
+    project_label = _short_project_label(result.project_root)
     concern_label = _friendly_dimension_name(min(result.dimension_scores, key=result.dimension_scores.get))
+    intro_lines = _wrap_text(
+        "This assessment summarizes repository practices associated with transparent, reproducible empirical workflows. It is a workflow score, not a judgment on the paper quality itself.",
+        86,
+    )
     findings_markup = []
-    finding_y = 416
+    finding_y = 420
     if top_findings:
         for finding in top_findings:
             severity_color = SEVERITY_COLORS.get(finding.severity, PALETTE["slate"])
             location = f" [{finding.path}]" if finding.path else ""
-            title = _truncate(finding.title + location, 56)
+            title = _truncate(finding.title + location, 58)
             detail = _truncate(finding.remediation, 88)
             findings_markup.append(
                 f"""
-                <rect x="64" y="{finding_y - 32}" width="670" height="82" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
-                <rect x="64" y="{finding_y - 32}" width="10" height="82" rx="5" fill="{severity_color}"/>
+                <rect x="64" y="{finding_y - 34}" width="696" height="90" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
+                <rect x="64" y="{finding_y - 34}" width="10" height="90" rx="5" fill="{severity_color}"/>
                 <text x="96" y="{finding_y}" font-size="21" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{_escape_svg(title)}</text>
                 <text x="96" y="{finding_y + 26}" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">{_escape_svg(detail)}</text>
                 """
             )
-            finding_y += 94
+            finding_y += 104
     else:
         findings_markup.append(
             f"""
-            <rect x="64" y="384" width="670" height="82" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
-            <rect x="64" y="384" width="10" height="82" rx="5" fill="{PALETTE['olive']}"/>
-            <text x="96" y="416" font-size="21" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">No open findings</text>
-            <text x="96" y="442" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">The project looks structurally disciplined on the current heuristics.</text>
+            <rect x="64" y="386" width="696" height="90" rx="8" fill="{PALETTE['panel']}" stroke="{PALETTE['rule']}"/>
+            <rect x="64" y="386" width="10" height="90" rx="5" fill="{PALETTE['olive']}"/>
+            <text x="96" y="420" font-size="21" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">No open findings</text>
+            <text x="96" y="446" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">The project looks structurally disciplined on the current heuristics.</text>
             """
         )
 
     dimension_rows = []
-    row_y = 518
+    row_y = 614
     for dimension, dimension_score in result.dimension_scores.items():
         tone = _score_color(dimension_score)
         dimension_rows.append(
             f"""
-            <line x1="796" y1="{row_y - 18}" x2="1256" y2="{row_y - 18}" stroke="{PALETTE['rule']}" stroke-width="1"/>
-            <text x="814" y="{row_y}" font-size="18" fill="{PALETTE['ink']}" font-family="{SANS_STACK}">{_escape_svg(_friendly_dimension_name(dimension))}</text>
-            <text x="1104" y="{row_y}" font-size="16" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">{_dimension_label(dimension_score)}</text>
-            <text x="1230" y="{row_y}" text-anchor="end" font-size="21" fill="{tone}" font-family="{SERIF_STACK}">{dimension_score:.1f}</text>
+            <line x1="780" y1="{row_y - 20}" x2="1116" y2="{row_y - 20}" stroke="{PALETTE['rule']}" stroke-width="1"/>
+            <text x="796" y="{row_y}" font-size="18" fill="{PALETTE['ink']}" font-family="{SANS_STACK}">{_escape_svg(_friendly_dimension_name(dimension))}</text>
+            <text x="1110" y="{row_y}" text-anchor="end" font-size="21" fill="{tone}" font-family="{SERIF_STACK}">{dimension_score:.1f}</text>
             """
         )
-        row_y += 40
-    snapshot_y = 338
-    snapshot_height = 140
+        row_y += 46
+    snapshot_y = 370
+    snapshot_height = 166
+    snapshot_lines = _wrap_text(
+        f"Primary concern: {concern_label}. The current score suggests {_score_phrase(score)}.",
+        34,
+    )
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="econharness scorecard">
   <rect width="{width}" height="{height}" fill="{PALETTE['paper']}"/>
@@ -212,33 +226,32 @@ def _render_svg(result: ScanResult) -> str:
   <text x="64" y="94" font-size="21" letter-spacing="2" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">ECONHARNESS</text>
   <text x="64" y="172" font-size="42" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Research Replication Assessment</text>
   <text x="64" y="206" font-size="19" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Repository structure, reproducibility, and traceability review</text>
-  <text x="64" y="238" font-size="16" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">This assessment summarizes repository practices associated with transparent, reproducible empirical workflows. It is a workflow score, not a judgment on the paper's substantive quality.</text>
+  {_svg_text_block(64, 238, intro_lines, font_size=16, fill=PALETTE['muted'], font_family=SANS_STACK, line_height=22)}
 
-  <text x="822" y="170" font-size="16" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Overall assessment</text>
-  <text x="822" y="238" font-size="88" fill="{score_color}" font-family="{SERIF_STACK}">{score:.1f}</text>
-  <text x="1012" y="236" font-size="26" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{status_label}</text>
-  <text x="822" y="278" font-size="16" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Assessed on {today}</text>
-
-  <line x1="798" y1="132" x2="798" y2="314" stroke="{PALETTE['rule']}" stroke-width="1"/>
-  <text x="1088" y="164" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Files reviewed</text>
-  <text x="1228" y="164" text-anchor="end" font-size="24" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{result.summary.get('files_scanned', 0)}</text>
-  <text x="1088" y="208" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Open findings</text>
-  <text x="1228" y="208" text-anchor="end" font-size="24" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{result.summary.get('findings', 0)}</text>
-  <text x="1088" y="252" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">High-severity findings</text>
-  <text x="1228" y="252" text-anchor="end" font-size="24" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{result.summary.get('high_severity', 0)}</text>
+  <rect x="780" y="136" width="340" height="224" rx="12" fill="{PALETTE['panel_alt']}" stroke="{PALETTE['rule']}"/>
+  <text x="806" y="170" font-size="16" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Overall assessment</text>
+  <text x="806" y="236" font-size="64" fill="{score_color}" font-family="{SERIF_STACK}">{score:.1f}</text>
+  <text x="806" y="268" font-size="23" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{status_label}</text>
+  <text x="806" y="300" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Assessed on {today}</text>
+  <line x1="806" y1="316" x2="1092" y2="316" stroke="{PALETTE['rule']}" stroke-width="1"/>
+  <text x="806" y="344" font-size="13" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Files</text>
+  <text x="862" y="344" font-size="22" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{result.summary.get('files_scanned', 0)}</text>
+  <text x="914" y="344" font-size="13" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Findings</text>
+  <text x="996" y="344" font-size="22" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{result.summary.get('findings', 0)}</text>
+  <text x="1038" y="344" font-size="13" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">High</text>
+  <text x="1090" y="344" text-anchor="end" font-size="22" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">{result.summary.get('high_severity', 0)}</text>
 
   <text x="64" y="340" font-size="28" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Highest-priority improvements</text>
   <text x="64" y="370" font-size="15" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">A compact list of the next changes most likely to improve replication readiness.</text>
   {''.join(findings_markup)}
 
-  <rect x="790" y="{snapshot_y}" width="466" height="{snapshot_height}" rx="12" fill="{PALETTE['panel_alt']}" stroke="{PALETTE['rule']}"/>
-  <text x="822" y="{snapshot_y + 42}" font-size="24" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Repository snapshot</text>
-  <text x="822" y="{snapshot_y + 72}" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Project</text>
-  <text x="822" y="{snapshot_y + 98}" font-size="14" fill="{PALETTE['ink']}" font-family="{MONO_STACK}">{_escape_svg(project_label)}</text>
-  <text x="822" y="{snapshot_y + 126}" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Primary concern: {_escape_svg(concern_label)}. The current score suggests {_escape_svg(_score_phrase(score))}.</text>
+  <rect x="780" y="{snapshot_y}" width="340" height="{snapshot_height}" rx="12" fill="{PALETTE['panel_alt']}" stroke="{PALETTE['rule']}"/>
+  <text x="804" y="{snapshot_y + 40}" font-size="24" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Repository snapshot</text>
+  <text x="804" y="{snapshot_y + 68}" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Project</text>
+  <text x="804" y="{snapshot_y + 94}" font-size="14" fill="{PALETTE['ink']}" font-family="{MONO_STACK}">{_escape_svg(project_label)}</text>
+  {_svg_text_block(804, snapshot_y + 122, snapshot_lines, font_size=14, fill=PALETTE['muted'], font_family=SANS_STACK, line_height=18)}
 
-  <text x="790" y="476" font-size="28" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Dimension assessment</text>
-  <text x="790" y="500" font-size="14" fill="{PALETTE['muted']}" font-family="{SANS_STACK}">Compact table of workflow areas most likely to matter in handoff and reruns.</text>
+  <text x="780" y="572" font-size="28" fill="{PALETTE['ink']}" font-family="{SERIF_STACK}">Dimension assessment</text>
   {''.join(dimension_rows)}
 </svg>
 """
