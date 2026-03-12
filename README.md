@@ -17,6 +17,51 @@ In that sense, it is meant to help an agent gradually "self-heal" an economics p
 
 It can also be used directly by a human, but most users will probably get the most value by giving it to their agent and letting the agent work through the findings.
 
+## Installation
+
+`econharness` is meant to be installed as a reusable command-line tool, not into each individual research project.
+
+It currently requires:
+
+- `Python 3.11+`
+- one isolated tool installer such as `pipx` or `uv`
+
+Install from a clone of this repository with either:
+
+```bash
+git clone <repo-url>
+cd econharness
+pipx install .
+```
+
+or:
+
+```bash
+git clone <repo-url>
+cd econharness
+uv tool install .
+```
+
+Both approaches give you an isolated global install, so `econharness` is available across projects without adding its dependencies to the environment of any particular research repo.
+
+If you want to try it without a persistent install and already use `uv`, you can also run it directly from the repository with:
+
+```bash
+uvx --from . econharness scan --path tests/fixtures/good_project
+```
+
+If you are developing on `econharness` itself, use:
+
+```bash
+python3 -m pip install -e .
+```
+
+Quick smoke test after install:
+
+```bash
+econharness scan --path tests/fixtures/good_project
+```
+
 ## Two Ways To Use econharness
 
 - `Hands-off (recommended)`: give the prompt below to Claude Code or Codex and let the agent use `econharness` as its repair loop.
@@ -43,11 +88,11 @@ Use econharness as the project-quality harness for this repository.
 Your goal is not just to make the code run. Your goal is to improve the project so it looks like a reproducible empirical economics project.
 
 Default workflow:
-1. Run `python3 -m econharness scan --path .`
+1. Run `econharness scan --path .`
 2. Read the strict score, dimension breakdown, and top findings.
 3. Fix the highest-priority findings first.
 4. Prefer improvements that strengthen reproducibility, portability, stage separation, and project clarity over generic refactoring.
-5. Run `python3 -m econharness scan --path .` again after meaningful changes.
+5. Run `econharness scan --path .` again after meaningful changes.
 6. Repeat until the most important findings are resolved or you hit a clear stopping point.
 
 When fixing issues, prioritize:
@@ -109,13 +154,13 @@ The standard is closer to Gentzkow/Shapiro-style project discipline than to gene
 From the repository root:
 
 ```bash
-python3 -m econharness scan --path tests/fixtures/good_project
-python3 -m econharness status --path tests/fixtures/good_project
-python3 -m econharness next --path tests/fixtures/good_project
-python3 -m econharness verify --path tests/fixtures/good_project --profile fast
-python3 -m econharness review --path tests/fixtures/good_project
-python3 -m econharness scorecard --path tests/fixtures/good_project
-python3 -m econharness init --path /path/to/project
+econharness scan --path tests/fixtures/good_project
+econharness status --path tests/fixtures/good_project
+econharness next --path tests/fixtures/good_project
+econharness verify --path tests/fixtures/good_project --profile fast
+econharness review --path tests/fixtures/good_project
+econharness scorecard --path tests/fixtures/good_project
+econharness init --path /path/to/project
 ```
 
 What these do:
