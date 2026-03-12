@@ -88,12 +88,15 @@ Use econharness as the project-quality harness for this repository.
 Your goal is not just to make the code run. Your goal is to improve the project so it looks like a reproducible empirical economics project.
 
 Default workflow:
-1. Run `econharness scan --path .`
-2. Read the strict score, dimension breakdown, and top findings.
-3. Fix the highest-priority findings first.
-4. Prefer improvements that strengthen reproducibility, portability, stage separation, and project clarity over generic refactoring.
-5. Run `econharness scan --path .` again after meaningful changes.
-6. Repeat until the most important findings are resolved or you hit a clear stopping point.
+1. Before treating findings as actionable, check whether the repository matches econharness defaults for stage paths, pipeline commands, environments, and key datasets.
+2. If the repo uses a non-default layout or workflow, run `econharness init --path .` and edit `.econharness.yml` first so the harness reflects the actual project structure.
+3. Prefer configuring `.econharness.yml` over rewriting the repo when a finding is caused by missing pipeline commands, non-default stage paths, undeclared datasets, undeclared artifacts, or other repo-specific conventions.
+4. Run `econharness scan --path .`
+5. Read the strict score, dimension breakdown, and top findings.
+6. Fix the highest-priority findings first.
+7. Prefer improvements that strengthen reproducibility, portability, stage separation, and project clarity over generic refactoring.
+8. Run `econharness scan --path .` again after meaningful config or code changes.
+9. Repeat until the most important findings are resolved or you hit a clear stopping point.
 
 When fixing issues, prioritize:
 - authoritative rebuild commands
@@ -103,6 +106,14 @@ When fixing issues, prioritize:
 - portable relative paths instead of absolute paths
 - artifact traceability into the paper/output layer
 - dead code, unused imports, duplicate logic, and orphaned scripts
+
+Before changing project code or moving files, check whether the finding would be resolved more correctly by updating `.econharness.yml`.
+Typical config-first cases include:
+- declaring `pipeline.command.fast` and `pipeline.command.full`
+- setting non-default `raw`, `derived`, `analysis`, `output`, `paper`, or `temp` paths
+- declaring key datasets, units of observation, primary keys, and parents
+- declaring expected tables, figures, and paper files
+- declaring environment managers and lockfiles
 
 Do not optimize for generic software-engineering elegance at the expense of transparency.
 Do not hide research logic behind unnecessary abstractions.
