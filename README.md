@@ -4,122 +4,24 @@
 
 Current version: `0.1.0` (alpha)
 
-Its value is not just that it tells you what is wrong with a research repo.
-Its value is that it gives Claude Code, Codex, or another coding agent a concrete standard and feedback loop for making the repo better over repeated passes.
-In that sense, it is meant to help an agent gradually "self-heal" an economics project instead of just adding more ad hoc code.
+Its main value is that it gives Claude Code, Codex, or another coding agent a concrete standard and feedback loop for making a research repo better over repeated passes.
+It can also be used directly by a human, but most users will probably get the most value by giving it to their agent and letting the agent work through the findings.
 
-It is built for the situation many economists are now in:
+## Two Ways To Use econharness
 
-- you use Claude Code, Codex, or another LLM agent to help write code;
-- the agent often produces useful work, but also leaves behind confusing project structure, redundant scripts, fragile paths, and undocumented steps;
-- you want a way to check whether the project still looks like a reproducible economics project rather than an accumulating pile of AI-generated fixes;
-- you want the agent itself to have a structured way to notice those problems and work through them systematically.
+- `Hands-off (recommended)`: give the prompt below to Claude Code or Codex and let the agent use `econharness` as its repair loop.
+- `Direct use`: run `econharness` yourself from the command line to inspect the project, review findings, and generate a scorecard.
 
-This repository is an early prototype of that idea.
+If you are unsure which mode you want, start with the hands-off one.
 
-The goal is not just to help a human inspect the project after the fact.
-The goal is also to give Claude Code, Codex, or a similar agent a framework for helping the project "self-heal" over repeated passes.
+## If You Want The Hands-Off Workflow
 
-## Why This Exists
+The intended model is simple:
 
-Most code-quality tools are written for software engineers building apps, libraries, or services.
-That is not the main problem in most economics projects.
-
-In an economics project, the important questions are usually things like:
-
-- can another RA or coauthor rerun this from raw data to final outputs;
-- is there one clear way to rebuild the project;
-- are raw, constructed, analysis, and output files separated cleanly;
-- are there hidden manual steps;
-- are paths portable across machines;
-- are the environments reproducible;
-- did the LLM help write code, but also create extra junk, duplicate logic, or scripts nobody can now interpret.
-
-`econharness` is meant to check those things first.
-
-It still keeps some ordinary software-hygiene checks, such as dead code and unused imports, because those matter in research projects too. But the center of gravity is research reproducibility, not software elegance.
-
-Another way to say it:
-
-- the agent writes and edits code;
-- `econharness` gives the agent a research-project standard to optimize toward.
-
-## What It Tries To Catch
-
-`econharness` scans a project and surfaces findings around:
-
-- missing one-command rebuild workflows;
-- manual steps and hand-edited intermediates;
-- poor separation between raw data, derived data, analysis code, and outputs;
-- non-portable or absolute file paths;
-- missing reproducible environments such as `renv` or `pixi`;
-- weak data lineage and poor artifact traceability into the paper layer;
-- duplicate keys and other relational-data problems in important intermediate files;
-- dead code, unused imports, redundancy, orphaned scripts, and other LLM mess.
-
-The intended standard is closer to Gentzkow/Shapiro-style project discipline than to generic software-engineering polish.
-
-## What It Is Not
-
-`econharness` is not:
-
-- a replacement for your own judgment;
-- a statistical referee;
-- a proof that a project is correct;
-- a general-purpose software quality platform;
-- a fully autonomous research agent.
-
-It is better to think of it as a structured project audit for research code.
-
-## How This Fits With Claude Code and Codex
-
-If you are new to LLM agents, the easiest mental model is:
-
-- Claude Code or Codex helps you write and edit code.
-- `econharness` checks what kind of project you now have, and gives the agent a disciplined loop for improving it.
-
-That distinction matters.
-
-The agent is the thing doing work.
-The harness is the thing checking whether the work left your project in a usable state and telling the agent what to fix next.
-
-A common workflow looks like this:
-
-1. ask Claude Code or Codex to help with a task;
-2. run `econharness scan`;
-3. look at the top findings;
-4. ask the agent to fix those findings;
-5. run `econharness scan` again.
-
-In other words, `econharness` is meant to help you supervise agent-written code, not replace the agent.
-
-## Agent Harness Idea
-
-The project is intentionally trying to do something similar, in an economics-research context, to what tools like `desloppify` try to do for engineering codebases.
-
-The difference is the target standard.
-
-For a software-engineering harness, the north star might be:
-
-- abstraction quality;
-- modularity;
-- coupling;
-- architecture beauty.
-
-For `econharness`, the north star is more like:
-
-- one-command reproducibility;
-- no hidden manual steps;
-- clean raw/build/analysis/output separation;
-- portable paths;
-- declared environments;
-- clear handoff to an RA or coauthor;
-- less accumulated LLM junk.
-
-So the project is both:
-
-- a human-facing audit tool;
-- an agent-facing repair loop.
+1. your agent writes or edits code;
+2. `econharness` checks what kind of project you now have;
+3. the agent uses those findings to improve the repo;
+4. the loop repeats until the project looks more like a reproducible economics workflow and less like an accumulation of ad hoc fixes.
 
 ## Instructions For Your Agent
 
@@ -157,7 +59,42 @@ If you make changes, explain which econharness findings you were addressing and 
 That prompt is deliberately simple.
 The point is to make the agent follow a repeatable discipline rather than improvising a new standard each session.
 
-## Basic Commands
+## What Problem This Solves
+
+Many economists are now in a situation like this:
+
+- they use Claude Code, Codex, or another LLM agent to help write code;
+- the agent produces useful work, but also leaves behind confusing project structure, redundant scripts, fragile paths, and undocumented steps;
+- over time the project still runs, but becomes harder for an RA, coauthor, or even the original author to understand and rerun.
+
+In an economics project, the important questions are usually:
+
+- can another RA or coauthor rerun this from raw data to final outputs;
+- is there one clear way to rebuild the project;
+- are raw, constructed, analysis, and output files separated cleanly;
+- are there hidden manual steps;
+- are paths portable across machines;
+- are the environments reproducible;
+- did the LLM help write code, but also create extra junk, duplicate logic, or scripts nobody can now interpret.
+
+`econharness` is meant to check those things first.
+
+## What It Checks
+
+`econharness` scans a project and surfaces findings around:
+
+- missing one-command rebuild workflows;
+- manual steps and hand-edited intermediates;
+- poor separation between raw data, derived data, analysis code, and outputs;
+- non-portable or absolute file paths;
+- missing reproducible environments such as `renv` or `pixi`;
+- weak data lineage and poor artifact traceability into the paper layer;
+- duplicate keys and other relational-data problems in important intermediate files;
+- dead code, unused imports, redundancy, orphaned scripts, and other LLM mess.
+
+The standard is closer to Gentzkow/Shapiro-style project discipline than to generic software-engineering polish.
+
+## If You Want To Use It Yourself Directly
 
 From the repository root:
 
@@ -181,7 +118,7 @@ What these do:
 - `scorecard`: regenerate the SVG and HTML scorecard;
 - `init`: write a starter `.econharness.yml`.
 
-## What You Get After A Scan
+## How To Read The Output
 
 Running `scan` gives you:
 
@@ -220,6 +157,18 @@ The config is where you tell it things like:
 - which artifacts you expect the project to produce.
 
 The default file written by `init` uses JSON-compatible YAML to keep parsing simple and dependency-light.
+
+## What It Is Not
+
+`econharness` is not:
+
+- a replacement for your own judgment;
+- a statistical referee;
+- a proof that a project is correct;
+- a general-purpose software quality platform;
+- a fully autonomous research agent.
+
+It is better to think of it as a structured project audit plus agent-repair loop for research code.
 
 ## Who This Is For
 
