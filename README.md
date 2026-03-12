@@ -2,7 +2,7 @@
 
 `econharness` is an agent harness and project-checking tool for empirical economics workflows.
 
-Current version: `0.1.0a1` (alpha)
+Current version: `0.1.0` (alpha)
 
 Its value is not just that it tells you what is wrong with a research repo.
 Its value is that it gives Claude Code, Codex, or another coding agent a concrete standard and feedback loop for making the repo better over repeated passes.
