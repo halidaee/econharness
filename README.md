@@ -4,7 +4,17 @@
 
 Current version: `0.1.0` (alpha)
 
-Its main value is that it gives Claude Code, Codex, or another coding agent a concrete standard and feedback loop for making a research repo better over repeated passes.
+It is built for the situation many economists are now in:
+
+- you use Claude Code, Codex, or another LLM agent to help write code;
+- the agent often produces useful work, but also leaves behind confusing project structure, redundant scripts, fragile paths, and undocumented steps;
+- you want a way to check whether the project still looks like a reproducible economics project rather than an accumulating pile of AI-generated fixes;
+- you want the agent itself to have a structured way to notice those problems and work through them systematically.
+
+Its main value is not just that it tells you what is wrong with a research repo.
+Its main value is that it gives Claude Code, Codex, or another coding agent a concrete standard and feedback loop for making the repo better over repeated passes.
+In that sense, it is meant to help an agent gradually "self-heal" an economics project instead of just adding more ad hoc code.
+
 It can also be used directly by a human, but most users will probably get the most value by giving it to their agent and letting the agent work through the findings.
 
 ## Two Ways To Use econharness
