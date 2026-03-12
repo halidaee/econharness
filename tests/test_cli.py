@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -114,6 +115,29 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(svg_path.exists())
         self.assertTrue(html_path.exists())
+
+    def test_default_excludes_skip_environment_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            (project / ".pixi" / "envs" / "default" / "lib").mkdir(parents=True)
+            (project / "renv" / "library").mkdir(parents=True)
+            (project / "analysis").mkdir(parents=True)
+
+            (project / ".pixi" / "envs" / "default" / "lib" / "noise.py").write_text(
+                "# edit this manually\nimport os\n", encoding="utf-8"
+            )
+            (project / "renv" / "library" / "noise.R").write_text(
+                "# run this manually\n", encoding="utf-8"
+            )
+            (project / "analysis" / "main.py").write_text(
+                "from pathlib import Path\nprint(Path('ok'))\n", encoding="utf-8"
+            )
+
+            result = scan_project(project)
+
+            scanned_paths = {finding.path for finding in result.findings if finding.path}
+            self.assertNotIn(".pixi/envs/default/lib/noise.py", scanned_paths)
+            self.assertNotIn("renv/library/noise.R", scanned_paths)
 
 
 if __name__ == "__main__":
