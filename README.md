@@ -171,6 +171,8 @@ econharness scan --path tests/fixtures/good_project
 econharness status --path tests/fixtures/good_project
 econharness next --path tests/fixtures/good_project
 econharness verify --path tests/fixtures/good_project --profile fast
+econharness verify --path tests/fixtures/good_project --profile full --from-scratch
+econharness verify --path tests/fixtures/good_project --profile full --check-clean-tree
 econharness review --path tests/fixtures/good_project
 econharness scorecard --path tests/fixtures/good_project
 econharness init --path /path/to/project
@@ -181,7 +183,7 @@ What these do:
 - `scan`: inspect the project, compute scores, save findings, and generate a scorecard;
 - `status`: show the last saved project status;
 - `next`: show the next highest-priority finding to fix;
-- `verify`: run a configured fast or full rebuild check;
+- `verify`: run a configured fast or full rebuild check, optionally quarantining generated artifacts or reporting whether the git tree stays clean after the run;
 - `review`: print a short research-structure summary;
 - `scorecard`: regenerate the SVG and HTML scorecard;
 - `init`: write a starter `.econharness.yml`.
