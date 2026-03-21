@@ -110,6 +110,7 @@ When fixing issues, prioritize:
 Before changing project code or moving files, check whether the finding would be resolved more correctly by updating `.econharness.yml`.
 Typical config-first cases include:
 - declaring `pipeline.command.fast` and `pipeline.command.full`
+- declaring `pipeline.command.tests`
 - defining explicit `stages` with `match`, `read_roots`, `write_roots`, and `slow`
 - setting non-default `raw`, `derived`, `analysis`, `output`, `paper`, or `temp` paths
 - declaring key datasets, units of observation, primary keys, and parents
@@ -218,7 +219,7 @@ This matters especially in economics projects because a lot of code “works on 
 The config is where you tell it things like:
 
 - what the authoritative rebuild command is;
-- what the fast and full verification commands are;
+- what the fast, full, and test verification commands are;
 - where raw, derived, analysis, output, and paper paths live;
 - which code stages are expected to read and write which roots;
 - which stages are computationally expensive and what outputs they are expected to materialize;

@@ -22,6 +22,7 @@ from econharness.self_documenting import (
     iter_vague_filename_issues,
     iter_vague_function_name_issues,
 )
+from econharness.tests_presence import summarize_test_presence
 from econharness.version_control import (
     iter_filename_variant_clusters,
     iter_versioned_filename_issues,
@@ -830,6 +831,38 @@ def detect_function_state_discipline(project_root: Path, files: list[Path]) -> l
                 path=path,
             )
         )
+    return findings
+
+
+def detect_tests_presence(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
+    summary = summarize_test_presence(project_root, config, files)
+    findings: list[Finding] = []
+
+    if summary.helper_heavy and not summary.test_paths and not summary.has_tests_command:
+        findings.append(
+            make_finding(
+                dimension="automation_and_one_command_rebuild",
+                severity="medium",
+                title="Helper-heavy project has no automated tests",
+                detail="The repo defines reusable helper code but does not declare a test command or include conventional test files.",
+                remediation="Add a lightweight automated test path and declare it under `pipeline.command.tests` in `.econharness.yml`.",
+                score_impact=6,
+            )
+        )
+
+    if summary.test_paths and not summary.has_tests_command:
+        findings.append(
+            make_finding(
+                dimension="automation_and_one_command_rebuild",
+                severity="low",
+                title="Test files exist without configured test command",
+                detail=f"Conventional test files exist, including {', '.join(summary.test_paths[:3])}, but `pipeline.command.tests` is not configured.",
+                remediation="Declare one authoritative test command so agents and collaborators know how to run the project checks.",
+                score_impact=3,
+                path=summary.test_paths[0],
+            )
+        )
+
     return findings
 
 

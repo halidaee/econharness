@@ -15,6 +15,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "command": {
             "fast": "",
             "full": "",
+            "tests": "",
         },
         "entrypoints": [],
     },
