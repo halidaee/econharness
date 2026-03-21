@@ -10,6 +10,7 @@ from econharness.detectors import (
     detect_automation,
     detect_directory_structure,
     detect_environment_reproducibility,
+    detect_function_state_discipline,
     detect_heavy_stage_smoke_gaps,
     detect_manual_steps,
     detect_merge_workflow,
@@ -41,6 +42,7 @@ def scan_project(project_root: Path) -> ScanResult:
     findings.extend(detect_path_portability(project_root, files))
     findings.extend(detect_version_control_discipline(project_root, config, files))
     findings.extend(detect_self_documenting_clarity(project_root, files))
+    findings.extend(detect_function_state_discipline(project_root, files))
     findings.extend(detect_artifact_traceability(project_root, config, files))
     findings.extend(detect_paper_source_leakage(project_root, config, files))
     findings.extend(detect_relational_data(project_root, config))

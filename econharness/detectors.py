@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
 
+from econharness.function_state import iter_global_write_issues
 from econharness.lookup_reconstruction import (
     cluster_repeated_lookup_candidates,
     extract_lookup_candidates,
@@ -788,6 +789,23 @@ def detect_self_documenting_clarity(project_root: Path, files: list[Path]) -> li
             )
         )
 
+    return findings
+
+
+def detect_function_state_discipline(project_root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for issue in iter_global_write_issues(project_root, files):
+        findings.append(
+            make_finding(
+                dimension="software_hygiene_and_redundancy",
+                severity="medium",
+                title="Function writes to hidden global state",
+                detail=f"{issue.path} {issue.detail}.",
+                remediation="Pass state explicitly through function arguments and return values instead of mutating module-level or global variables from inside functions.",
+                score_impact=5,
+                path=issue.path,
+            )
+        )
     return findings
 
 
