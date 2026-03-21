@@ -70,6 +70,8 @@ def create_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify", help="Run a configured fast or full verification command")
     verify.add_argument("--path", default=".")
     verify.add_argument("--profile", choices=["fast", "full"], default="fast")
+    verify.add_argument("--from-scratch", action="store_true")
+    verify.add_argument("--check-clean-tree", action="store_true")
 
     init = subparsers.add_parser("init", help="Write a default config file")
     init.add_argument("--path", default=".")
@@ -118,13 +120,30 @@ def main() -> None:
 
     if args.command == "verify":
         try:
-            result = verify_project(project_root, args.profile)
+            result = verify_project(
+                project_root,
+                args.profile,
+                from_scratch=args.from_scratch,
+                check_clean_tree=args.check_clean_tree,
+            )
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             sys.exit(2)
         print(f"Profile: {result.profile}")
         print(f"Command: {result.command}")
         print(f"Return code: {result.returncode}")
+        if result.from_scratch:
+            print("From scratch: yes")
+            if result.quarantine_dir:
+                print(f"Quarantine dir: {result.quarantine_dir}")
+            print(f"Moved artifacts: {len(result.moved_paths)}")
+            print(f"Regenerated artifacts: {len(result.regenerated_paths)}")
+            print(f"Missing regenerated artifacts: {len(result.missing_paths)}")
+        if args.check_clean_tree:
+            before = "unavailable" if result.clean_tree_before is None else ("yes" if result.clean_tree_before else "no")
+            after = "unavailable" if result.clean_tree_after is None else ("yes" if result.clean_tree_after else "no")
+            print(f"Clean tree before: {before}")
+            print(f"Clean tree after: {after}")
         if result.stdout.strip():
             print("--- stdout ---")
             print(result.stdout.rstrip())

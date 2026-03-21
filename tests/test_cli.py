@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from econharness.config import default_config
 from econharness.detectors import detect_software_hygiene
 from econharness.scanner import scan_project
 
@@ -89,6 +90,57 @@ class HarnessTests(unittest.TestCase):
         )
         self.assertEqual(full.returncode, 0, full.stderr)
         self.assertIn("FULL_OK", full.stdout)
+
+    def test_verify_command_supports_from_scratch_and_clean_tree_reporting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            config = default_config()
+            config["pipeline"]["command"]["full"] = "python3 build.py"
+            config["pipeline"]["command"]["fast"] = "python3 build.py"
+            (project / ".econharness.yml").write_text(json.dumps(config) + "\n", encoding="utf-8")
+            (project / "build.py").write_text(
+                "\n".join(
+                    [
+                        "from pathlib import Path",
+                        "Path('derived').mkdir(parents=True, exist_ok=True)",
+                        "Path('derived/model.txt').write_text('fresh\\n', encoding='utf-8')",
+                        "Path('output').mkdir(parents=True, exist_ok=True)",
+                        "Path('output/table.csv').write_text('fresh\\n', encoding='utf-8')",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (project / "derived").mkdir(parents=True)
+            (project / "output").mkdir(parents=True)
+            (project / "derived" / "model.txt").write_text("old\n", encoding="utf-8")
+            (project / "output" / "table.csv").write_text("old\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "econharness",
+                    "verify",
+                    "--path",
+                    str(project),
+                    "--profile",
+                    "full",
+                    "--from-scratch",
+                    "--check-clean-tree",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("From scratch: yes", result.stdout)
+            self.assertIn("Moved artifacts: 2", result.stdout)
+            self.assertIn("Regenerated artifacts: 2", result.stdout)
+            self.assertIn("Missing regenerated artifacts: 0", result.stdout)
+            self.assertIn("Clean tree before: unavailable", result.stdout)
+            self.assertIn("Clean tree after: unavailable", result.stdout)
 
     def test_scorecard_command_supports_custom_paths(self) -> None:
         project = FIXTURES / "good_project"
