@@ -111,7 +111,7 @@ Before changing project code or moving files, check whether the finding would be
 Typical config-first cases include:
 - declaring `pipeline.command.fast` and `pipeline.command.full`
 - declaring `pipeline.command.tests`
-- defining explicit `stages` with `match`, `read_roots`, `write_roots`, and `slow`
+- defining explicit `stages` with `match`, `read_roots`, `write_roots`, `slow`, and for expensive stages also `command` and `outputs`
 - setting non-default `raw`, `derived`, `analysis`, `output`, `paper`, or `temp` paths
 - declaring key datasets, units of observation, primary keys, and parents
 - declaring expected tables, figures, and paper files

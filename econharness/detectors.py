@@ -22,7 +22,9 @@ from econharness.self_documenting import (
     iter_vague_filename_issues,
     iter_vague_function_name_issues,
 )
+from econharness.slow_stages import iter_slow_stage_issues
 from econharness.stage_contracts import iter_stage_contract_issues
+from econharness.stages import normalize_stages
 from econharness.tests_presence import summarize_test_presence
 from econharness.version_control import (
     iter_filename_variant_clusters,
@@ -496,6 +498,11 @@ def detect_automation(project_root: Path, config: dict, files: list[Path]) -> li
     commands = config.get("pipeline", {}).get("command", {})
     fast = str(commands.get("fast", "")).strip()
     full = str(commands.get("full", "")).strip()
+    slow_stages = [
+        stage
+        for stage in normalize_stages(config).get("stages", [])
+        if bool(stage.get("slow"))
+    ]
     if not full:
         findings.append(
             make_finding(
@@ -507,7 +514,7 @@ def detect_automation(project_root: Path, config: dict, files: list[Path]) -> li
                 score_impact=28,
             )
         )
-    if not fast:
+    if not fast and not slow_stages:
         findings.append(
             make_finding(
                 dimension="automation_and_one_command_rebuild",
@@ -1272,19 +1279,64 @@ def detect_software_hygiene(project_root: Path, files: list[Path]) -> list[Findi
     return findings
 
 
-def detect_heavy_stage_smoke_gaps(config: dict) -> list[Finding]:
+def detect_slow_stage_discipline(config: dict) -> list[Finding]:
     findings: list[Finding] = []
-    for stage in config.get("pipeline", {}).get("heavy_stages", []):
-        name = stage.get("name", "<unnamed>")
-        if not stage.get("smoke_command") and not stage.get("justification"):
+    for issue in iter_slow_stage_issues(config):
+        if issue.kind == "missing_fast":
             findings.append(
                 make_finding(
                     dimension="automation_and_one_command_rebuild",
                     severity="medium",
-                    title="Heavy stage has no smoke command",
-                    detail=f"Heavy stage `{name}` is declared without a smoke command or explicit justification.",
-                    remediation="Add `smoke_command` for a cheap confidence check, or document why only full runs make sense.",
+                    title="Slow stage is declared without a fast verification path",
+                    detail=(
+                        "Slow stages "
+                        f"{', '.join(issue.stage_names)} are declared, but `pipeline.command.fast` is empty."
+                    ),
+                    remediation="Add `pipeline.command.fast` that skips or stubs slow stages while still checking pipeline wiring.",
+                    score_impact=8,
+                )
+            )
+        elif issue.kind == "fast_matches_full":
+            findings.append(
+                make_finding(
+                    dimension="automation_and_one_command_rebuild",
+                    severity="medium",
+                    title="Fast verification command matches full rebuild despite slow stages",
+                    detail=(
+                        "`pipeline.command.fast` and `pipeline.command.full` resolve to the same command even though slow stages "
+                        f"{', '.join(issue.stage_names)} are declared."
+                    ),
+                    remediation="Make `pipeline.command.fast` materially cheaper than the full rebuild, or unset `slow: true` on stages that are not actually expensive.",
+                    score_impact=8,
+                )
+            )
+        elif issue.kind == "missing_outputs" and issue.stage_name:
+            findings.append(
+                make_finding(
+                    dimension="automation_and_one_command_rebuild",
+                    severity="medium",
+                    title="Slow stage does not declare outputs",
+                    detail=f"Slow stage `{issue.stage_name}` is marked expensive but does not declare any outputs to preserve and reuse.",
+                    remediation="Add `stages[].outputs` for the artifacts this stage produces so downstream work can reuse them.",
+                    score_impact=6,
+                )
+            )
+        elif issue.kind == "no_reusable_outputs" and issue.stage_name:
+            findings.append(
+                make_finding(
+                    dimension="automation_and_one_command_rebuild",
+                    severity="medium",
+                    title="Slow stage has no reusable artifact roots",
+                    detail=(
+                        f"Slow stage `{issue.stage_name}` only declares outputs in non-reusable roots: "
+                        f"{', '.join(issue.outputs)}."
+                    ),
+                    remediation="Point `stages[].outputs` at derived or output roots that downstream stages can reuse.",
                     score_impact=6,
                 )
             )
     return findings
+
+
+def detect_heavy_stage_smoke_gaps(config: dict) -> list[Finding]:
+    return detect_slow_stage_discipline(config)

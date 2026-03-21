@@ -7,14 +7,20 @@
     "entrypoints": [
       "scripts/verify_fast.sh",
       "scripts/verify_full.sh"
-    ],
-    "heavy_stages": [
-      {
-        "name": "bootstrap",
-        "smoke_command": "python3 -c \"print('bootstrap smoke')\""
-      }
     ]
   },
+  "stages": [
+    {
+      "name": "bootstrap",
+      "match": [],
+      "read_roots": [],
+      "write_roots": [],
+      "slow": true,
+      "command": "python3 -c \"print('bootstrap')\"",
+      "inputs": ["derived/panel.csv"],
+      "outputs": ["derived/panel.csv"]
+    }
+  ],
   "paths": {
     "raw": "raw",
     "derived": "derived",

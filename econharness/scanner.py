@@ -11,7 +11,6 @@ from econharness.detectors import (
     detect_directory_structure,
     detect_environment_reproducibility,
     detect_function_state_discipline,
-    detect_heavy_stage_smoke_gaps,
     detect_manual_steps,
     detect_merge_workflow,
     detect_paper_source_leakage,
@@ -20,6 +19,7 @@ from econharness.detectors import (
     detect_relational_data,
     detect_sample_construction_drift,
     detect_self_documenting_clarity,
+    detect_slow_stage_discipline,
     detect_software_hygiene,
     detect_stage_contracts,
     detect_tests_presence,
@@ -36,7 +36,7 @@ def scan_project(project_root: Path) -> ScanResult:
     files = list(iter_project_files(project_root, config.get("exclude", [])))
     findings = []
     findings.extend(detect_automation(project_root, config, files))
-    findings.extend(detect_heavy_stage_smoke_gaps(config))
+    findings.extend(detect_slow_stage_discipline(config))
     findings.extend(detect_manual_steps(project_root, files))
     findings.extend(detect_directory_structure(project_root, config))
     findings.extend(detect_raw_data_writes(project_root, config, files))
