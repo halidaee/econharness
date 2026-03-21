@@ -22,6 +22,7 @@ from econharness.self_documenting import (
     iter_vague_filename_issues,
     iter_vague_function_name_issues,
 )
+from econharness.stage_contracts import iter_stage_contract_issues
 from econharness.tests_presence import summarize_test_presence
 from econharness.version_control import (
     iter_filename_variant_clusters,
@@ -863,6 +864,60 @@ def detect_tests_presence(project_root: Path, config: dict, files: list[Path]) -
             )
         )
 
+    return findings
+
+
+def detect_stage_contracts(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for issue in iter_stage_contract_issues(project_root, config, files):
+        if issue.kind == "unmatched":
+            findings.append(
+                make_finding(
+                    dimension="directory_and_stage_structure",
+                    severity="low",
+                    title="Code file is not assigned to a configured stage",
+                    detail=f"{issue.path} does not match any configured `stages[].match` pattern.",
+                    remediation="Assign code files to explicit stages so read/write contracts can be enforced consistently.",
+                    score_impact=2,
+                    path=issue.path,
+                )
+            )
+        elif issue.kind == "ambiguous":
+            findings.append(
+                make_finding(
+                    dimension="directory_and_stage_structure",
+                    severity="medium",
+                    title="Code file matches multiple configured stages",
+                    detail=f"{issue.path} matches multiple stage patterns: {', '.join(issue.matched_stages)}.",
+                    remediation="Make stage match patterns mutually exclusive so each code file has one clear contract.",
+                    score_impact=4,
+                    path=issue.path,
+                )
+            )
+        elif issue.kind == "read_violation":
+            findings.append(
+                make_finding(
+                    dimension="directory_and_stage_structure",
+                    severity="medium",
+                    title="Stage reads outside declared roots",
+                    detail=f"{issue.path} belongs to stage `{issue.stage_name}` but reads `{issue.referenced_path}` outside its configured `read_roots`.",
+                    remediation="Update the stage contract or move the read so the file only consumes declared stage inputs.",
+                    score_impact=4,
+                    path=issue.path,
+                )
+            )
+        elif issue.kind == "write_violation":
+            findings.append(
+                make_finding(
+                    dimension="directory_and_stage_structure",
+                    severity="medium",
+                    title="Stage writes outside declared roots",
+                    detail=f"{issue.path} belongs to stage `{issue.stage_name}` but writes `{issue.referenced_path}` outside its configured `write_roots`.",
+                    remediation="Update the stage contract or write outputs into the stage's declared destinations.",
+                    score_impact=5,
+                    path=issue.path,
+                )
+            )
     return findings
 
 

@@ -21,6 +21,7 @@ from econharness.detectors import (
     detect_sample_construction_drift,
     detect_self_documenting_clarity,
     detect_software_hygiene,
+    detect_stage_contracts,
     detect_tests_presence,
     detect_version_control_discipline,
     iter_project_files,
@@ -45,6 +46,7 @@ def scan_project(project_root: Path) -> ScanResult:
     findings.extend(detect_self_documenting_clarity(project_root, files))
     findings.extend(detect_function_state_discipline(project_root, files))
     findings.extend(detect_tests_presence(project_root, config, files))
+    findings.extend(detect_stage_contracts(project_root, config, files))
     findings.extend(detect_artifact_traceability(project_root, config, files))
     findings.extend(detect_paper_source_leakage(project_root, config, files))
     findings.extend(detect_relational_data(project_root, config))
