@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from econharness.detectors import detect_software_hygiene
 from econharness.scanner import scan_project
 
 
@@ -46,7 +47,6 @@ class HarnessTests(unittest.TestCase):
         bad = scan_project(FIXTURES / "bad_project")
         titles = {finding.title for finding in bad.findings}
         self.assertIn("Early merged dataset has many upstream parents", titles)
-        self.assertIn("Analysis script performs repeated merges", titles)
         self.assertIn("Repeated sample-construction logic across scripts", titles)
         self.assertIn("Paper references non-output artifacts directly", titles)
         self.assertIn("Stata script changes directory explicitly", titles)
@@ -138,6 +138,232 @@ class HarnessTests(unittest.TestCase):
             scanned_paths = {finding.path for finding in result.findings if finding.path}
             self.assertNotIn(".pixi/envs/default/lib/noise.py", scanned_paths)
             self.assertNotIn("renv/library/noise.R", scanned_paths)
+
+    def test_oversized_code_script_uses_tiered_severity_and_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+
+            def write_script(name: str, line_count: int) -> Path:
+                path = project / name
+                lines = [f"value_{name.replace('.', '_')}_{i:04d} <- {i}" for i in range(line_count)]
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                return path
+
+            files = [
+                write_script("below_threshold.R", 249),
+                write_script("low_threshold.R", 250),
+                write_script("medium_threshold.R", 500),
+                write_script("high_threshold.R", 1000),
+            ]
+
+            findings = [
+                finding
+                for finding in detect_software_hygiene(project, files)
+                if finding.title == "Oversized code script"
+            ]
+            by_path = {finding.path: finding for finding in findings}
+
+            self.assertNotIn("below_threshold.R", by_path)
+            self.assertEqual(by_path["low_threshold.R"].severity, "low")
+            self.assertEqual(by_path["low_threshold.R"].score_impact, 2)
+            self.assertEqual(by_path["medium_threshold.R"].severity, "medium")
+            self.assertEqual(by_path["medium_threshold.R"].score_impact, 4)
+            self.assertEqual(by_path["high_threshold.R"].severity, "high")
+            self.assertEqual(by_path["high_threshold.R"].score_impact, 8)
+
+    def test_repeated_derived_lookup_reconstruction_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            analysis = project / "analysis"
+            analysis.mkdir(parents=True)
+
+            (analysis / "quality_a.R").write_text(
+                "\n".join(
+                    [
+                        'prod_data <- readRDS("derived/data_production_restricted.rds")',
+                        'cross_scored <- readRDS("output/production_cross_scored.rds")',
+                        "prod_data <- prod_data %>%",
+                        "  mutate(quality_index = rowMeans(across(all_of(COMPOSITE_SCORES)), na.rm = TRUE))",
+                        "breaks <- quantile(prod_data$quality_index, probs = seq(0, 1, 0.2), na.rm = TRUE)",
+                        "prod_data <- prod_data %>%",
+                        "  mutate(quality_quint = cut(quality_index, breaks = breaks, include.lowest = TRUE, labels = 1:5))",
+                        'cross_scored <- cross_scored %>% left_join(prod_data %>% select(application_id, quality_index, quality_quint), by = "application_id")',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (analysis / "quality_b.R").write_text(
+                "\n".join(
+                    [
+                        'group_out <- readRDS("output/shap_group_nsim500.rds")',
+                        'prod_data_quality <- readRDS("derived/data_production_restricted.rds")',
+                        "prod_data_quality <- prod_data_quality %>%",
+                        "  mutate(quality_index = rowMeans(across(all_of(COMPOSITE_SCORES)), na.rm = TRUE))",
+                        "quality_breaks <- quantile(prod_data_quality$quality_index, probs = seq(0, 1, 0.2), na.rm = TRUE)",
+                        "prod_data_quality <- prod_data_quality %>%",
+                        "  mutate(quality_quint = cut(quality_index, breaks = quality_breaks, include.lowest = TRUE, labels = 1:5))",
+                        "quality_lookup <- prod_data_quality %>% select(application_id, quality_quint)",
+                        'plot_data <- group_out %>% left_join(quality_lookup, by = "application_id")',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = scan_project(project)
+            findings = [finding for finding in result.findings if finding.title == "Repeated derived lookup reconstruction across scripts"]
+
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "low")
+            self.assertIn("data_production_restricted.rds", findings[0].detail)
+            self.assertIn("quality_quint", findings[0].detail)
+
+    def test_base_r_repeated_lookup_reconstruction_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            analysis = project / "analysis"
+            analysis.mkdir(parents=True)
+
+            script_template = "\n".join(
+                [
+                    'plot_data <- readRDS("output/shap_group_nsim500.rds")',
+                    'prod_data <- readRDS("derived/data_production_restricted.rds")',
+                    'prod_data$quality_index <- rowMeans(prod_data[c("score_a", "score_b")], na.rm = TRUE)',
+                    "breaks <- quantile(prod_data$quality_index, probs = seq(0, 1, 0.2), na.rm = TRUE)",
+                    'prod_data$quality_quint <- cut(prod_data$quality_index, breaks = breaks, include.lowest = TRUE, labels = 1:5)',
+                    'quality_lookup <- prod_data[c("application_id", "quality_quint")]',
+                    'plot_data <- merge(plot_data, quality_lookup, by = "application_id", all.x = TRUE)',
+                    "",
+                ]
+            )
+
+            (analysis / "base_quality_a.R").write_text(script_template, encoding="utf-8")
+            (analysis / "base_quality_b.R").write_text(script_template, encoding="utf-8")
+
+            findings = [
+                finding
+                for finding in scan_project(project).findings
+                if finding.title == "Repeated derived lookup reconstruction across scripts"
+            ]
+
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "low")
+            self.assertIn("data_production_restricted.rds", findings[0].detail)
+            self.assertIn("quality_quint", findings[0].detail)
+
+    def test_pandas_repeated_lookup_reconstruction_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            analysis = project / "analysis"
+            analysis.mkdir(parents=True)
+
+            (analysis / "quality_lookup_a.py").write_text(
+                "\n".join(
+                    [
+                        "import pandas as pd",
+                        "",
+                        'scores = pd.read_parquet("output/production_scores.parquet")',
+                        'prod = pd.read_parquet("derived/data_production_restricted.parquet")',
+                        'prod["quality_index"] = prod[["score_a", "score_b"]].mean(axis=1)',
+                        'prod["quality_quint"] = pd.qcut(prod["quality_index"], q=5, labels=False, duplicates="drop")',
+                        'quality_lookup = prod[["application_id", "quality_quint"]]',
+                        'scores = scores.merge(quality_lookup, on="application_id", how="left")',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (analysis / "quality_lookup_b.py").write_text(
+                "\n".join(
+                    [
+                        "import pandas as pd",
+                        "",
+                        'explain = pd.read_parquet("output/group_shap.parquet")',
+                        'prod = pd.read_parquet("derived/data_production_restricted.parquet")',
+                        'prod = prod.assign(quality_index=prod[["score_a", "score_b"]].mean(axis=1))',
+                        'prod["quality_quint"] = pd.qcut(prod["quality_index"], q=5, labels=False, duplicates="drop")',
+                        'explain = explain.merge(prod[["application_id", "quality_quint"]], on="application_id", how="left")',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            findings = [
+                finding
+                for finding in scan_project(project).findings
+                if finding.title == "Repeated derived lookup reconstruction across scripts"
+            ]
+
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "low")
+            self.assertIn("data_production_restricted.parquet", findings[0].detail)
+            self.assertIn("quality_quint", findings[0].detail)
+
+    def test_repeated_lookup_reconstruction_uses_structural_severity_tiers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            analysis = project / "analysis"
+            analysis.mkdir(parents=True)
+
+            script_body = "\n".join(
+                [
+                    'plot_data <- readRDS("output/shap_group_nsim500.rds")',
+                    'prod_data <- readRDS("derived/data_production_restricted.rds")',
+                    'prod_data$quality_index <- rowMeans(prod_data[c("score_a", "score_b")], na.rm = TRUE)',
+                    "breaks <- quantile(prod_data$quality_index, probs = seq(0, 1, 0.2), na.rm = TRUE)",
+                    'prod_data$quality_quint <- cut(prod_data$quality_index, breaks = breaks, include.lowest = TRUE, labels = 1:5)',
+                    'quality_lookup <- prod_data[c("application_id", "quality_quint")]',
+                    'plot_data <- merge(plot_data, quality_lookup, by = "application_id", all.x = TRUE)',
+                    "",
+                ]
+            )
+
+            for index in range(5):
+                (analysis / f"quality_{index}.R").write_text(script_body, encoding="utf-8")
+
+            findings = [
+                finding
+                for finding in scan_project(project).findings
+                if finding.title == "Repeated derived lookup reconstruction across scripts"
+            ]
+
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "high")
+            self.assertEqual(findings[0].score_impact, 12)
+
+    def test_trivial_repeated_lookup_joins_are_not_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            analysis = project / "analysis"
+            analysis.mkdir(parents=True)
+
+            (analysis / "train_a.R").write_text(
+                "\n".join(
+                    [
+                        'eval_data <- readRDS("derived/data_evaluation_restricted.rds")',
+                        "feature_data <- prepare_features(eval_data, COMPOSITE_SCORES, include_questions = TRUE)",
+                        'feature_data <- feature_data %>% left_join(eval_data %>% select(application_id, tenure_leq_90), by = "application_id")',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (analysis / "train_b.R").write_text(
+                "\n".join(
+                    [
+                        'data_eval <- readRDS("derived/data_evaluation_restricted.rds")',
+                        "feature_data <- prepare_features(data_eval, COMPOSITE_SCORES, include_questions = TRUE)",
+                        'feature_data <- feature_data %>% left_join(data_eval %>% select(application_id, tenure_leq_90), by = "application_id")',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            titles = {finding.title for finding in scan_project(project).findings}
+            self.assertNotIn("Repeated derived lookup reconstruction across scripts", titles)
 
 
 if __name__ == "__main__":

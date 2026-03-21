@@ -19,6 +19,19 @@ class Finding:
 
 
 @dataclass(slots=True)
+class LookupCandidate:
+    path: str
+    language: str
+    source_artifact: str | None
+    join_keys: tuple[str, ...]
+    projected_columns: frozenset[str]
+    derived_columns: frozenset[str]
+    derived_families: frozenset[str]
+    transform_ops: frozenset[str]
+    derivation_kind: str
+
+
+@dataclass(slots=True)
 class ScanResult:
     project_root: str
     findings: list[Finding]

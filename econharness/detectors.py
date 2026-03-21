@@ -9,6 +9,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
 
+from econharness.lookup_reconstruction import (
+    cluster_repeated_lookup_candidates,
+    extract_lookup_candidates,
+)
 from econharness.models import Finding
 
 ABSOLUTE_PATH_PATTERNS = [
@@ -28,16 +32,46 @@ MANUAL_STEP_PATTERNS = [
 SCRIPT_SUFFIXES = {".py", ".R", ".r", ".qmd", ".sh", ".md", ".txt", ".do"}
 CODE_SUFFIXES = {".py", ".R", ".r", ".sh"}
 PAPER_SUFFIXES = {".qmd", ".Rmd", ".rmd", ".tex", ".md"}
-MERGE_PATTERNS = [
-    re.compile(r"\.merge\s*\("),
-    re.compile(r"\bpd\.merge\s*\("),
-    re.compile(r"\bleft_join\s*\("),
-    re.compile(r"\bright_join\s*\("),
-    re.compile(r"\binner_join\s*\("),
-    re.compile(r"\bfull_join\s*\("),
-    re.compile(r"\bmerge\s+[0-9m:]+\s+.+\s+using\b", re.IGNORECASE),
-    re.compile(r"\bjoinby\b", re.IGNORECASE),
-]
+R_JOIN_FUNCTIONS = {"left_join", "right_join", "inner_join", "full_join"}
+R_LOAD_FUNCTIONS = {"readRDS", "read_csv", "read_delim", "read_tsv", "fread", "read_dta"}
+R_DERIVATION_FUNCTIONS = {
+    "mutate",
+    "transmute",
+    "summarise",
+    "summarize",
+    "pivot_longer",
+    "pivot_wider",
+    "separate",
+    "separate_wider_delim",
+    "unite",
+    "group_by",
+    "ungroup",
+    "quantile",
+    "ntile",
+    "cut",
+    "rowMeans",
+    "across",
+    "case_when",
+}
+R_IDENTIFIER_STOPWORDS = {
+    "all_of",
+    "any_of",
+    "c",
+    "data",
+    "desc",
+    "ends_with",
+    "everything",
+    "false",
+    "first",
+    "function",
+    "ifelse",
+    "na",
+    "na_real_",
+    "names",
+    "starts_with",
+    "true",
+    "where",
+}
 SAMPLE_PATTERNS = [
     re.compile(r"\bfilter\s*\("),
     re.compile(r"\bsubset\s*\("),
@@ -46,6 +80,11 @@ SAMPLE_PATTERNS = [
     re.compile(r"\banalysis_sample\b"),
     re.compile(r"\bsample_flag\b"),
     re.compile(r"\beligible\s*=="),
+]
+OVERSIZED_SCRIPT_TIERS = [
+    (1000, "high", 8),
+    (500, "medium", 4),
+    (250, "low", 2),
 ]
 
 
@@ -91,6 +130,351 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def _mask_string_literals(text: str) -> str:
+    return re.sub(r"(['\"])(?:\\.|(?!\1).)*\1", '""', text, flags=re.DOTALL)
+
+
+def _paren_delta(text: str) -> int:
+    masked = _mask_string_literals(text)
+    opens = sum(masked.count(char) for char in "([{")
+    closes = sum(masked.count(char) for char in ")]}")
+    return opens - closes
+
+
+def _extract_balanced_call(text: str, open_paren_index: int) -> tuple[str, int] | None:
+    depth = 0
+    in_string: str | None = None
+    escaped = False
+    for index in range(open_paren_index, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            continue
+        if char in {'"', "'"}:
+            in_string = char
+            continue
+        if char == "(":
+            depth += 1
+            continue
+        if char == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_paren_index + 1 : index], index
+    return None
+
+
+def _split_top_level_args(text: str) -> list[str]:
+    args: list[str] = []
+    start = 0
+    depth = 0
+    in_string: str | None = None
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            continue
+        if char in {'"', "'"}:
+            in_string = char
+            continue
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            depth -= 1
+            continue
+        if char == "," and depth == 0:
+            args.append(text[start:index].strip())
+            start = index + 1
+    tail = text[start:].strip()
+    if tail:
+        args.append(tail)
+    return args
+
+
+def _iter_r_function_calls(text: str, function_names: set[str]) -> Iterable[tuple[str, str]]:
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])(?:[A-Za-z0-9_.]+::)?({'|'.join(sorted(map(re.escape, function_names), key=len, reverse=True))})\s*\(",
+    )
+    for match in pattern.finditer(text):
+        open_paren_index = text.find("(", match.end() - 1)
+        if open_paren_index < 0:
+            continue
+        extracted = _extract_balanced_call(text, open_paren_index)
+        if extracted is None:
+            continue
+        args_text, _ = extracted
+        yield match.group(1), args_text
+
+
+def _extract_r_assignments(text: str) -> defaultdict[str, list[dict[str, object]]]:
+    assignments: defaultdict[str, list[dict[str, object]]] = defaultdict(list)
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r"^\s*([A-Za-z][A-Za-z0-9_.]*)\s*<-\s*(.*)$", line)
+        if not match:
+            index += 1
+            continue
+        start_line = index + 1
+        block_lines = [line]
+        rhs_lines = [match.group(2)]
+        depth = _paren_delta(line)
+        index += 1
+        while index < len(lines):
+            next_line = lines[index]
+            stripped = next_line.strip()
+            if depth <= 0 and stripped == "":
+                break
+            if depth <= 0 and re.match(r"^\s*[A-Za-z][A-Za-z0-9_.]*\s*<-\s*", next_line):
+                break
+            if (
+                depth <= 0
+                and not next_line.startswith((" ", "\t"))
+                and not re.match(r"^\s*(%>%|\|>|\)|\+|,)", next_line)
+            ):
+                break
+            block_lines.append(next_line)
+            rhs_lines.append(next_line)
+            depth += _paren_delta(next_line)
+            index += 1
+        assignments[match.group(1)].append(
+            {
+                "line": start_line,
+                "text": "\n".join(block_lines),
+                "rhs": "\n".join(rhs_lines).strip(),
+            }
+        )
+    return assignments
+
+
+def _extract_artifact_label(expr: str) -> str | None:
+    if not any(f"{name}(" in expr or f"{name} (" in expr for name in R_LOAD_FUNCTIONS):
+        return None
+    quoted = re.findall(r"['\"]([^'\"]+\.[A-Za-z0-9]+)['\"]", expr)
+    if not quoted:
+        return None
+    return Path(quoted[-1]).name
+
+
+def _leading_r_source_variable(expr: str) -> str | None:
+    match = re.match(r"^\s*([A-Za-z][A-Za-z0-9_.]*)\s*(?:%>%|\|>|$)", expr)
+    if not match:
+        return None
+    token = match.group(1)
+    if token in R_IDENTIFIER_STOPWORDS or token in R_LOAD_FUNCTIONS:
+        return None
+    return token
+
+
+def _first_r_argument_variable(expr: str) -> str | None:
+    call_match = re.match(r"^\s*(?:[A-Za-z0-9_.]+::)?[A-Za-z][A-Za-z0-9_.]*\s*\(", expr)
+    if not call_match:
+        return None
+    open_paren_index = expr.find("(", call_match.end() - 1)
+    if open_paren_index < 0:
+        return None
+    extracted = _extract_balanced_call(expr, open_paren_index)
+    if extracted is None:
+        return None
+    args_text, _ = extracted
+    args = _split_top_level_args(args_text)
+    if not args:
+        return None
+    first_arg = args[0].strip()
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]*", first_arg):
+        return first_arg
+    return None
+
+
+def _extract_identifier_tokens(text: str) -> set[str]:
+    tokens = {
+        token
+        for token in re.findall(r"\b[A-Za-z][A-Za-z0-9_.]*\b", text)
+        if token not in R_IDENTIFIER_STOPWORDS and not token[0].isupper()
+    }
+    return tokens
+
+
+def _extract_select_columns(text: str) -> set[str]:
+    columns: set[str] = set()
+    for _, args_text in _iter_r_function_calls(text, {"select"}):
+        for arg in _split_top_level_args(args_text):
+            columns.update(
+                token
+                for token in _extract_identifier_tokens(arg)
+                if token not in {"select", "across"}
+            )
+            columns.update(re.findall(r"['\"]([^'\"]+)['\"]", arg))
+    return columns
+
+
+def _extract_created_columns(text: str) -> set[str]:
+    columns: set[str] = set()
+    for function_name, args_text in _iter_r_function_calls(
+        text,
+        {"mutate", "transmute", "summarise", "summarize", "rename"},
+    ):
+        for arg in _split_top_level_args(args_text):
+            match = re.match(r"^\s*([A-Za-z][A-Za-z0-9_.]*)\s*=", arg)
+            if match:
+                columns.add(match.group(1))
+        if function_name in {"mutate", "transmute"}:
+            name_templates = re.findall(r"\.names\s*=\s*['\"]([^'\"]+)['\"]", args_text)
+            for template in name_templates:
+                if "quint" in template:
+                    columns.add("quality_quint")
+    for _, args_text in _iter_r_function_calls(text, {"pivot_longer", "pivot_wider", "separate", "separate_wider_delim"}):
+        for arg in _split_top_level_args(args_text):
+            for parameter in {"names_to", "values_to", "names_from", "values_from"}:
+                match = re.match(rf"^\s*{parameter}\s*=\s*['\"]([^'\"]+)['\"]", arg)
+                if match:
+                    columns.add(match.group(1))
+    return columns
+
+
+def _extract_transform_tokens(text: str) -> set[str]:
+    transforms: set[str] = set()
+    for function_name, _ in _iter_r_function_calls(text, R_DERIVATION_FUNCTIONS):
+        transforms.add(function_name.lower())
+    return transforms
+
+
+def _latest_assignment_before(
+    assignments: defaultdict[str, list[dict[str, object]]],
+    var_name: str,
+    before_line: int,
+) -> dict[str, object] | None:
+    for assignment in reversed(assignments.get(var_name, [])):
+        line = int(assignment["line"])
+        if line < before_line:
+            return assignment
+    return None
+
+
+def _empty_lookup_summary() -> dict[str, object]:
+    return {
+        "artifact": None,
+        "created_columns": set(),
+        "output_columns": set(),
+        "transform_tokens": set(),
+    }
+
+
+def _resolve_r_variable(
+    var_name: str,
+    assignments: defaultdict[str, list[dict[str, object]]],
+    before_line: int,
+    seen: set[tuple[str, int]],
+) -> dict[str, object]:
+    assignment = _latest_assignment_before(assignments, var_name, before_line)
+    if assignment is None:
+        return _empty_lookup_summary()
+    identity = (var_name, int(assignment["line"]))
+    if identity in seen:
+        return _empty_lookup_summary()
+
+    rhs = str(assignment["rhs"])
+    artifact = _extract_artifact_label(rhs)
+    created_columns = _extract_created_columns(rhs)
+    output_columns = _extract_select_columns(rhs) or set(created_columns)
+    transform_tokens = _extract_transform_tokens(rhs)
+
+    source_var = _leading_r_source_variable(rhs) or _first_r_argument_variable(rhs)
+    if source_var:
+        parent = _resolve_r_variable(
+            source_var,
+            assignments,
+            int(assignment["line"]),
+            seen | {identity},
+        )
+        artifact = artifact or parent["artifact"]
+        created_columns |= set(parent["created_columns"])
+        transform_tokens |= set(parent["transform_tokens"])
+        if not output_columns:
+            output_columns = set(parent["output_columns"])
+
+    return {
+        "artifact": artifact,
+        "created_columns": created_columns,
+        "output_columns": output_columns,
+        "transform_tokens": transform_tokens,
+    }
+
+
+def _analyze_r_lookup_expression(
+    expr: str,
+    assignments: defaultdict[str, list[dict[str, object]]],
+    before_line: int,
+) -> dict[str, object]:
+    expr = expr.strip()
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]*", expr):
+        return _resolve_r_variable(expr, assignments, before_line, set())
+
+    artifact = _extract_artifact_label(expr)
+    created_columns = _extract_created_columns(expr)
+    output_columns = _extract_select_columns(expr) or set(created_columns)
+    transform_tokens = _extract_transform_tokens(expr)
+
+    source_var = _leading_r_source_variable(expr) or _first_r_argument_variable(expr)
+    if source_var:
+        parent = _resolve_r_variable(source_var, assignments, before_line, set())
+        artifact = artifact or parent["artifact"]
+        created_columns |= set(parent["created_columns"])
+        transform_tokens |= set(parent["transform_tokens"])
+
+    return {
+        "artifact": artifact,
+        "created_columns": created_columns,
+        "output_columns": output_columns,
+        "transform_tokens": transform_tokens,
+    }
+
+
+def _normalize_column_family(name: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    normalized = re.sub(r"_(global|within_firm|overall|pooled)$", "", normalized)
+    if normalized.endswith("_quintile"):
+        normalized = normalized.removesuffix("_quintile") + "_quint"
+    return normalized
+
+
+def _extract_lookup_families(summary: dict[str, object], join_keys: tuple[str, ...]) -> set[str]:
+    created_columns = {
+        _normalize_column_family(column)
+        for column in set(summary["created_columns"])
+    }
+    output_columns = {
+        _normalize_column_family(column)
+        for column in set(summary["output_columns"])
+    }
+    join_families = {_normalize_column_family(key) for key in join_keys}
+    families = {column for column in created_columns & output_columns if column and column not in join_families}
+    return families
+
+
+def _lookup_candidates_match(left: dict[str, object], right: dict[str, object]) -> bool:
+    if left["artifact"] != right["artifact"]:
+        return False
+    if left["join_keys"] != right["join_keys"]:
+        return False
+    shared_families = set(left["families"]) & set(right["families"])
+    if not shared_families:
+        return False
+    shared_transforms = set(left["transform_tokens"]) & set(right["transform_tokens"])
+    return bool(shared_transforms) or len(shared_families) >= 2
 
 
 def detect_automation(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
@@ -523,28 +907,31 @@ def detect_relational_data(project_root: Path, config: dict) -> list[Finding]:
 
 
 def detect_merge_workflow(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
-    findings: list[Finding] = []
-    analysis_rel = str(config.get("paths", {}).get("analysis", "")).strip().strip("/")
+    candidates = []
     for path in files:
-        if path.suffix not in {".py", ".R", ".r", ".do"}:
-            continue
-        rel = path.relative_to(project_root).as_posix()
-        if analysis_rel and not rel.startswith(f"{analysis_rel}/") and rel != analysis_rel:
+        if path.suffix.lower() not in {".r", ".py"}:
             continue
         text = _read_text(path)
-        merge_count = sum(len(pattern.findall(text)) for pattern in MERGE_PATTERNS)
-        if merge_count >= 2:
-            findings.append(
-                make_finding(
-                    dimension="relational_data_discipline",
-                    severity="medium",
-                    title="Analysis script performs repeated merges",
-                    detail=f"{rel} contains {merge_count} merge/join operations in the analysis stage.",
-                    remediation="Push data construction into earlier build stages and keep analysis scripts closer to final estimation or output production.",
-                    score_impact=8,
-                    path=rel,
-                )
+        candidates.extend(extract_lookup_candidates(path, text, project_root=project_root))
+
+    findings: list[Finding] = []
+    for cluster in cluster_repeated_lookup_candidates(candidates):
+        family_phrase = ", ".join(cluster.families[:3]) if cluster.families else "derived lookup columns"
+        findings.append(
+            make_finding(
+                dimension="relational_data_discipline",
+                severity=cluster.severity,
+                title="Repeated derived lookup reconstruction across scripts",
+                detail=(
+                    f"A derived lookup from `{cluster.source_artifact}` joined on "
+                    f"`{', '.join(cluster.join_keys)}` is rebuilt in multiple scripts: "
+                    f"{', '.join(cluster.paths[:4])}. Shared derived families include {family_phrase}."
+                ),
+                remediation="Materialize the derived lookup once as an intermediate artifact and load it downstream.",
+                score_impact=cluster.score_impact,
+                path=cluster.paths[0],
             )
+        )
     return findings
 
 
@@ -593,18 +980,21 @@ def detect_software_hygiene(project_root: Path, files: list[Path]) -> list[Findi
             continue
         text = _read_text(path)
         lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
-        if len(lines) > 220:
-            findings.append(
-                make_finding(
-                    dimension="software_hygiene_and_redundancy",
-                    severity="medium",
-                    title="Oversized code script",
-                    detail=f"{rel} has {len(lines)} non-empty lines and likely carries too many responsibilities.",
-                    remediation="Split the script by stage or purpose only when the split makes the pipeline easier to understand.",
-                    score_impact=6,
-                    path=rel,
+        line_count = len(lines)
+        for threshold, severity, score_impact in OVERSIZED_SCRIPT_TIERS:
+            if line_count >= threshold:
+                findings.append(
+                    make_finding(
+                        dimension="software_hygiene_and_redundancy",
+                        severity=severity,
+                        title="Oversized code script",
+                        detail=f"{rel} has {line_count} non-empty lines and likely carries too many responsibilities.",
+                        remediation="Split the script by stage or purpose only when the split makes the pipeline easier to understand.",
+                        score_impact=score_impact,
+                        path=rel,
+                    )
                 )
-            )
+                break
         for index in range(max(0, len(lines) - 4)):
             block = tuple(lines[index : index + 5])
             duplicate_blocks[block] += 1
