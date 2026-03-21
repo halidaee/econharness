@@ -14,6 +14,7 @@ DIMENSION_WEIGHTS = {
     "environment_reproducibility": 10.0,
     "path_portability": 8.0,
     "artifact_traceability": 8.0,
+    "version_control_discipline": 5.0,
     "self_documenting_clarity": 3.0,
     "software_hygiene_and_redundancy": 8.0,
 }

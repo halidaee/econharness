@@ -2,7 +2,7 @@
 
 `econharness` is an agent harness and project-checking tool for empirical economics workflows.
 
-Current version: `0.1.0` (alpha)
+Current version: `0.1.1` (alpha)
 
 It is built for the situation many economists are now in:
 
@@ -88,9 +88,9 @@ Use econharness as the project-quality harness for this repository.
 Your goal is not just to make the code run. Your goal is to improve the project so it looks like a reproducible empirical economics project.
 
 Default workflow:
-1. Before treating findings as actionable, check whether the repository matches econharness defaults for stage paths, pipeline commands, environments, and key datasets.
+1. Before treating findings as actionable, check whether the repository matches econharness defaults for stage paths, stage contracts, pipeline commands, environments, and key datasets.
 2. If the repo uses a non-default layout or workflow, run `econharness init --path .` and edit `.econharness.yml` first so the harness reflects the actual project structure.
-3. Prefer configuring `.econharness.yml` over rewriting the repo when a finding is caused by missing pipeline commands, non-default stage paths, undeclared datasets, undeclared artifacts, or other repo-specific conventions.
+3. Prefer configuring `.econharness.yml` over rewriting the repo when a finding is caused by missing pipeline commands, undeclared stages, undeclared slow computational stages, non-default stage paths, undeclared datasets, undeclared artifacts, or other repo-specific conventions.
 4. Run `econharness scan --path .`
 5. Read the strict score, dimension breakdown, and top findings.
 6. Fix the highest-priority findings first.
@@ -110,6 +110,7 @@ When fixing issues, prioritize:
 Before changing project code or moving files, check whether the finding would be resolved more correctly by updating `.econharness.yml`.
 Typical config-first cases include:
 - declaring `pipeline.command.fast` and `pipeline.command.full`
+- defining explicit `stages` with `match`, `read_roots`, `write_roots`, and `slow`
 - setting non-default `raw`, `derived`, `analysis`, `output`, `paper`, or `temp` paths
 - declaring key datasets, units of observation, primary keys, and parents
 - declaring expected tables, figures, and paper files
@@ -219,6 +220,8 @@ The config is where you tell it things like:
 - what the authoritative rebuild command is;
 - what the fast and full verification commands are;
 - where raw, derived, analysis, output, and paper paths live;
+- which code stages are expected to read and write which roots;
+- which stages are computationally expensive and what outputs they are expected to materialize;
 - which datasets matter enough to declare keys and units of observation;
 - which artifacts you expect the project to produce.
 

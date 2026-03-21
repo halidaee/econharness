@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from econharness.stages import normalize_stages
+
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "pipeline": {
@@ -15,8 +17,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "full": "",
         },
         "entrypoints": [],
-        "heavy_stages": [],
     },
+    "stages": [],
     "paths": {
         "raw": "raw",
         "derived": "derived",
@@ -74,7 +76,7 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
 
 
 def default_config() -> dict[str, Any]:
-    return deepcopy(DEFAULT_CONFIG)
+    return normalize_stages(deepcopy(DEFAULT_CONFIG))
 
 
 def config_path_for(project_root: Path) -> Path:
@@ -101,7 +103,7 @@ def load_config(project_root: Path) -> dict[str, Any]:
         loaded = yaml.safe_load(text)  # type: ignore[no-untyped-call]
     if not isinstance(loaded, dict):
         raise ValueError(f"Config {config_path} must decode to an object.")
-    return _merge(default_config(), loaded)
+    return normalize_stages(_merge(default_config(), loaded))
 
 
 def render_default_config() -> str:
