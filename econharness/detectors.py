@@ -9,7 +9,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
 
-from econharness.function_state import iter_global_write_issues
+from econharness.function_state import (
+    iter_global_write_issues,
+    iter_outer_scope_dependency_issues,
+)
 from econharness.lookup_reconstruction import (
     cluster_repeated_lookup_candidates,
     extract_lookup_candidates,
@@ -804,6 +807,27 @@ def detect_function_state_discipline(project_root: Path, files: list[Path]) -> l
                 remediation="Pass state explicitly through function arguments and return values instead of mutating module-level or global variables from inside functions.",
                 score_impact=5,
                 path=issue.path,
+            )
+        )
+    grouped_outer_scope: defaultdict[str, list[object]] = defaultdict(list)
+    for issue in iter_outer_scope_dependency_issues(project_root, files):
+        grouped_outer_scope[issue.path].append(issue)
+    for path, issues in grouped_outer_scope.items():
+        if len(issues) < 2:
+            continue
+        function_names = ", ".join(f"`{issue.function_name}`" for issue in issues[:4])
+        findings.append(
+            make_finding(
+                dimension="software_hygiene_and_redundancy",
+                severity="low",
+                title="Function depends on outer scope",
+                detail=(
+                    f"{path} has {len(issues)} function(s) that depend on same-file module-level names rather than explicit inputs, "
+                    f"including {function_names}."
+                ),
+                remediation="Pass shared inputs explicitly into the function or move the dependency into a clearly documented config layer.",
+                score_impact=2,
+                path=path,
             )
         )
     return findings

@@ -83,6 +83,83 @@ class FunctionStateTests(unittest.TestCase):
 
             self.assertEqual(findings, [])
 
+    def test_python_outer_scope_dependency_is_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            (project / "analysis").mkdir(parents=True)
+            (project / "analysis" / "dependencies.py").write_text(
+                "\n".join(
+                    [
+                        "threshold = 0.8",
+                        "",
+                        "def score_row(value):",
+                        "    return value > threshold",
+                        "",
+                        "def keep_row(value):",
+                        "    return value >= threshold",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            files = list(iter_project_files(project, []))
+            findings = detect_function_state_discipline(project, files)
+
+            titles = {finding.title for finding in findings}
+            self.assertIn("Function depends on outer scope", titles)
+
+    def test_r_outer_scope_dependency_is_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            (project / "analysis").mkdir(parents=True)
+            (project / "analysis" / "dependencies.R").write_text(
+                "\n".join(
+                    [
+                        "THRESHOLD <- 0.8",
+                        "",
+                        "score_row <- function(value) {",
+                        "  value > THRESHOLD",
+                        "}",
+                        "",
+                        "keep_row <- function(value) {",
+                        "  value >= THRESHOLD",
+                        "}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            files = list(iter_project_files(project, []))
+            findings = detect_function_state_discipline(project, files)
+
+            titles = {finding.title for finding in findings}
+            self.assertIn("Function depends on outer scope", titles)
+
+    def test_explicit_arguments_and_single_constant_are_not_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            (project / "analysis").mkdir(parents=True)
+            (project / "analysis" / "safe.py").write_text(
+                "\n".join(
+                    [
+                        "SCALE = 2",
+                        "",
+                        "def scale_value(value, scale):",
+                        "    return value * scale",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            files = list(iter_project_files(project, []))
+            findings = detect_function_state_discipline(project, files)
+
+            outer_scope_findings = [finding for finding in findings if finding.title == "Function depends on outer scope"]
+            self.assertEqual(outer_scope_findings, [])
+
 
 if __name__ == "__main__":
     unittest.main()
