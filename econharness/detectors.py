@@ -14,6 +14,10 @@ from econharness.lookup_reconstruction import (
     extract_lookup_candidates,
 )
 from econharness.models import Finding
+from econharness.self_documenting import (
+    iter_vague_filename_issues,
+    iter_vague_function_name_issues,
+)
 from econharness.version_control import (
     iter_filename_variant_clusters,
     iter_versioned_filename_issues,
@@ -749,6 +753,38 @@ def detect_version_control_discipline(project_root: Path, config: dict, files: l
                 remediation="Collapse competing filename variants into one canonical file and preserve history in git rather than sibling copies.",
                 score_impact=5,
                 path=cluster.paths[0],
+            )
+        )
+
+    return findings
+
+
+def detect_self_documenting_clarity(project_root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+
+    for issue in iter_vague_filename_issues(project_root, files):
+        findings.append(
+            make_finding(
+                dimension="self_documenting_clarity",
+                severity="low",
+                title="Code filename is too generic",
+                detail=f"{issue.path} uses a {issue.reason}, which makes the file's purpose harder to infer from its name.",
+                remediation="Rename the file to describe its stage or purpose rather than using placeholders like `tmp`, `script2`, or `analysis2`.",
+                score_impact=2,
+                path=issue.path,
+            )
+        )
+
+    for issue in iter_vague_function_name_issues(project_root, files):
+        findings.append(
+            make_finding(
+                dimension="self_documenting_clarity",
+                severity="low",
+                title="Function name is too generic",
+                detail=f"{issue.path} defines `{issue.subject}`, a {issue.reason} that does not communicate purpose clearly.",
+                remediation="Rename reusable functions so their names describe what they compute or transform.",
+                score_impact=2,
+                path=issue.path,
             )
         )
 
