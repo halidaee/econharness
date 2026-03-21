@@ -14,6 +14,10 @@ from econharness.lookup_reconstruction import (
     extract_lookup_candidates,
 )
 from econharness.models import Finding
+from econharness.version_control import (
+    iter_filename_variant_clusters,
+    iter_versioned_filename_issues,
+)
 
 ABSOLUTE_PATH_PATTERNS = [
     re.compile(r"/Users/[^/\s]+/"),
@@ -713,6 +717,41 @@ def detect_path_portability(project_root: Path, files: list[Path]) -> list[Findi
                     path=rel,
                 )
             )
+    return findings
+
+
+def detect_version_control_discipline(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+
+    for issue in iter_versioned_filename_issues(project_root, config, files):
+        findings.append(
+            make_finding(
+                dimension="version_control_discipline",
+                severity="low",
+                title="Filename appears to encode manual version history",
+                detail=f"{issue.path} includes {issue.reason}, which suggests the repo is using filenames to track versions.",
+                remediation="Keep one canonical filename and rely on git history instead of suffixes like `final`, `new`, `v2`, or date stamps.",
+                score_impact=3,
+                path=issue.path,
+            )
+        )
+
+    for cluster in iter_filename_variant_clusters(project_root, config, files):
+        findings.append(
+            make_finding(
+                dimension="version_control_discipline",
+                severity="medium",
+                title="Parallel filename variants suggest manual versioning",
+                detail=(
+                    f"Files sharing the canonical name `{cluster.canonical_name}` appear in parallel: "
+                    f"{', '.join(cluster.paths[:4])}."
+                ),
+                remediation="Collapse competing filename variants into one canonical file and preserve history in git rather than sibling copies.",
+                score_impact=5,
+                path=cluster.paths[0],
+            )
+        )
+
     return findings
 
 
