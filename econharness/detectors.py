@@ -927,6 +927,109 @@ def detect_hpc_batch_script_health(project_root: Path, files: list[Path]) -> lis
     return findings
 
 
+ARRAY_SCRIPT_SUFFIXES = {".sh", ".slurm", ".job"}
+_TASK_ID_PATTERN = re.compile(r"\$\{?SLURM_ARRAY_TASK_ID\}?")
+# Shell redirections and common HPC output flags
+_OUTPUT_REDIRECT_PATTERN = re.compile(
+    r"(?:>>?)\s*(\S+)"
+    r"|(?:-o|--output(?:=|\s))(\S+)"
+    r"|(?:-e|--error(?:=|\s))(\S+)",
+)
+_DOCUMENTATION_COMMENT_PATTERN = re.compile(r"^\s*#(?!SBATCH)", re.MULTILINE)
+_NEARBY_WINDOW = 5  # lines above/below task ID usage to look for a comment
+
+
+def detect_job_array_expansion(project_root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for path in files:
+        if path.suffix not in ARRAY_SCRIPT_SUFFIXES:
+            continue
+        text = _read_text(path)
+        if not _SBATCH_PATTERN.search(text):
+            continue
+        if not _TASK_ID_PATTERN.search(text):
+            continue
+        rel = path.relative_to(project_root).as_posix()
+        lines = text.splitlines()
+
+        # ── Collision check: output paths that don't include $SLURM_ARRAY_TASK_ID ──
+        collision_found = False
+        for match in _OUTPUT_REDIRECT_PATTERN.finditer(text):
+            output_path_str = match.group(1) or match.group(2) or match.group(3) or ""
+            if not output_path_str:
+                continue
+            # Skip #SBATCH directive lines (use Slurm %a/%A substitution, not shell vars)
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_text = text[line_start:text.find("\n", match.start())]
+            if line_text.lstrip().startswith("#SBATCH"):
+                continue
+            # If the path directly contains $SLURM_ARRAY_TASK_ID it's disambiguated
+            if _TASK_ID_PATTERN.search(output_path_str):
+                continue
+            findings.append(
+                make_finding(
+                    dimension="path_portability",
+                    severity="medium",
+                    title="Job array script may write to same output path from all tasks",
+                    detail=(
+                        f"{rel} uses `$SLURM_ARRAY_TASK_ID` but may write to "
+                        f"`{output_path_str}` without including the task ID in the path. "
+                        "All tasks could overwrite each other's output."
+                    ),
+                    remediation=(
+                        "Include `$SLURM_ARRAY_TASK_ID` in the output filename: "
+                        "e.g. `results_${SLURM_ARRAY_TASK_ID}.csv`."
+                    ),
+                    score_impact=10,
+                    path=rel,
+                )
+            )
+            collision_found = True
+            break  # one collision finding per file is sufficient
+
+        # ── Undocumented mapping: no comment near any $SLURM_ARRAY_TASK_ID usage ──
+        task_id_linenos = [
+            i for i, line in enumerate(lines)
+            if _TASK_ID_PATTERN.search(line)
+        ]
+        has_nearby_comment = False
+        for lineno in task_id_linenos:
+            window_start = max(0, lineno - _NEARBY_WINDOW)
+            window_end = min(len(lines), lineno + _NEARBY_WINDOW + 1)
+            for nearby in lines[window_start:window_end]:
+                stripped = nearby.strip()
+                # A non-SBATCH, non-shebang comment counts as documentation
+                if (
+                    stripped.startswith("#")
+                    and not stripped.startswith("#SBATCH")
+                    and not stripped.startswith("#!")
+                ):
+                    has_nearby_comment = True
+                    break
+            if has_nearby_comment:
+                break
+
+        if not has_nearby_comment and task_id_linenos:
+            findings.append(
+                make_finding(
+                    dimension="path_portability",
+                    severity="low",
+                    title="Job array index-to-parameter mapping is undocumented",
+                    detail=(
+                        f"{rel} uses `$SLURM_ARRAY_TASK_ID` with no nearby comment "
+                        "explaining what each index value represents."
+                    ),
+                    remediation=(
+                        "Add a comment near the `$SLURM_ARRAY_TASK_ID` usage explaining the mapping, "
+                        "e.g.: `# Index N corresponds to country N in params/countries.csv`."
+                    ),
+                    score_impact=3,
+                    path=rel,
+                )
+            )
+    return findings
+
+
 def detect_version_control_discipline(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
 
