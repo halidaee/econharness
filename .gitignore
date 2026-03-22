@@ -4,3 +4,8 @@ __pycache__/
 .econharness/
 tests/fixtures/*/output/
 tests/fixtures/*/renv/
+
+# Local dev environment (not part of the distributed package)
+pixi.toml
+pixi.lock
+.pixi/
