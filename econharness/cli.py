@@ -8,7 +8,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from econharness.config import config_path_for, render_default_config
+from econharness.config import ENTRY_POINT_COMMANDS, bootstrap_config, config_path_for, render_default_config
 from econharness.scanner import scan_project
 from econharness.scorecard import generate_scorecard
 from econharness.state import findings_from_state, load_state, save_scan_result, scan_result_from_state
@@ -234,7 +234,17 @@ def main() -> None:
         if config_path.exists() and not args.force:
             print(f"{config_path} already exists. Use --force to overwrite.", file=sys.stderr)
             sys.exit(2)
-        config_path.write_text(render_default_config(), encoding="utf-8")
+        yaml_content = bootstrap_config(project_root)
+        config_path.write_text(yaml_content, encoding="utf-8")
+        # Print detection summary
+        found_eps = [ep for ep in ENTRY_POINT_COMMANDS if (project_root / ep).exists()]
+        if len(found_eps) == 0:
+            print("No pipeline entry point detected. Set pipeline commands manually.")
+        elif len(found_eps) == 1:
+            print(f"Detected pipeline entry point: {found_eps[0]}")
+        else:
+            ep_list = ", ".join(found_eps)
+            print(f"Warning: multiple pipeline entry points found ({ep_list}). Pipeline commands left blank — resolve before running verify.")
         print(f"Wrote {config_path}")
         return
 
