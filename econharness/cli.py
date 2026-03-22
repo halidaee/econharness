@@ -59,6 +59,22 @@ def _print_next(path: Path) -> None:
     print(f"Fix: {finding.remediation}")
 
 
+def _print_delta(delta: dict) -> None:
+    score_delta = delta.get("score_delta", 0.0)
+    sign = "+" if score_delta >= 0 else ""
+    print(f"\nDelta since last scan:")
+    print(f"  Score: {sign}{score_delta}")
+    for dim, d in delta.get("dimension_deltas", {}).items():
+        sign_d = "+" if d >= 0 else ""
+        print(f"  {dim}: {sign_d}{d}")
+    resolved = delta.get("resolved_findings", [])
+    new_f = delta.get("new_findings", [])
+    if resolved:
+        print(f"  Resolved: {', '.join(f['id'] for f in resolved)}")
+    if new_f:
+        print(f"  New:      {', '.join(f['id'] for f in new_f)}")
+
+
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="econharness")
     subparsers = parser.add_subparsers(dest="command")
@@ -70,6 +86,7 @@ def create_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="Show persisted project status")
     status.add_argument("--path", default=".")
     status.add_argument("--json", action="store_true", help="Emit JSON output")
+    status.add_argument("--diff", action="store_true", help="Show delta since last scan")
 
     next_cmd = subparsers.add_parser("next", help="Show the next highest-priority finding")
     next_cmd.add_argument("--path", default=".")
@@ -234,6 +251,11 @@ def main() -> None:
         result = scan_project(project_root)
         save_scan_result(project_root, result)
         svg_path, html_path = generate_scorecard(result, project_root)
+        from econharness.history import append_history, compute_delta, load_history, make_snapshot
+        snapshot = make_snapshot(result)
+        append_history(project_root, snapshot)
+        history = load_history(project_root)
+        delta = compute_delta(history[-2], history[-1]) if len(history) >= 2 else None
         if args.json:
             payload = {
                 "project_root": result.project_root,
@@ -241,15 +263,33 @@ def main() -> None:
                 "dimension_scores": result.dimension_scores,
                 "findings": [asdict(f) for f in result.findings],
                 "summary": result.summary,
+                "delta": delta,
             }
             print(json.dumps(payload))
         else:
             _print_scan(result)
+            if delta:
+                _print_delta(delta)
             print(f"Scorecard SVG: {svg_path}")
             print(f"Scorecard HTML: {html_path}")
         return
 
     if args.command == "status":
+        if getattr(args, "diff", False):
+            from econharness.history import compute_delta, load_history
+            history = load_history(project_root)
+            if len(history) < 2:
+                if args.json:
+                    print(json.dumps({"error": "Not enough scan history for a diff. Run scan at least twice."}))
+                    sys.exit(1)
+                print("Not enough scan history for a diff. Run scan at least twice.")
+                sys.exit(1)
+            delta = compute_delta(history[-2], history[-1])
+            if args.json:
+                print(json.dumps(delta))
+            else:
+                _print_delta(delta)
+            return
         state = load_state(project_root)
         if not state:
             if args.json:
