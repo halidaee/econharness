@@ -38,6 +38,7 @@ ABSOLUTE_PATH_PATTERNS = [
     re.compile(r"/Volumes/"),
     re.compile(r"/mnt/"),
 ]
+HPC_PATH_ROOT_PATTERN = re.compile(r"/(?:scratch|gpfs|lustre|beegfs)/")
 MACHINE_SPECIFIC_HINTS = ("Desktop", "Downloads", "Dropbox", "OneDrive", "Documents")
 MANUAL_STEP_PATTERNS = [
     re.compile(r"\bedit (this|the) file by hand\b", re.IGNORECASE),
@@ -45,7 +46,7 @@ MANUAL_STEP_PATTERNS = [
     re.compile(r"\bcopy (this|the) .* into\b", re.IGNORECASE),
     re.compile(r"\brun this manually\b", re.IGNORECASE),
 ]
-SCRIPT_SUFFIXES = {".py", ".R", ".r", ".qmd", ".sh", ".md", ".txt", ".do"}
+SCRIPT_SUFFIXES = {".py", ".R", ".r", ".qmd", ".sh", ".md", ".txt", ".do", ".slurm", ".job"}
 CODE_SUFFIXES = {".py", ".R", ".r", ".sh"}
 PAPER_SUFFIXES = {".qmd", ".Rmd", ".rmd", ".tex", ".md"}
 R_JOIN_FUNCTIONS = {"left_join", "right_join", "inner_join", "full_join"}
@@ -646,15 +647,71 @@ def detect_raw_data_writes(project_root: Path, config: dict, files: list[Path]) 
     return findings
 
 
+SUBMISSION_SCRIPT_SUFFIXES = {".sh", ".slurm", ".job"}
+# Matches: module load R/4.3.1  |  ml R/4.3.1  |  module load R  |  ml R
+# Also handles multi-module lines: module load R/4.3.1 gcc/12.2
+# Anchored to start of line (with MULTILINE) so .+ stops at end of line.
+_MODULE_LOAD_PATTERN = re.compile(
+    r"^[ \t]*(?:module\s+load|ml)\s+(.+?)[ \t]*$",
+    re.MULTILINE,
+)
+# Matches an individual module token: name (with optional /version)
+_MODULE_ITEM_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9_\-+.]*)(?:/([A-Za-z0-9._\-]+))?")
+
+
+def _collect_module_loads(files: list[Path]) -> dict[str, dict]:
+    """Collect module load statements from submission scripts.
+
+    Returns:
+        {
+          "pinned":   {module_name: {version: [Path, ...]}},
+          "unpinned": {module_name: [Path, ...]},
+        }
+    """
+    pinned: dict[str, dict[str, list[Path]]] = defaultdict(lambda: defaultdict(list))
+    unpinned: dict[str, list[Path]] = defaultdict(list)
+    for path in files:
+        if path.suffix not in SUBMISSION_SCRIPT_SUFFIXES:
+            continue
+        text = _read_text(path)
+        for load_match in _MODULE_LOAD_PATTERN.finditer(text):
+            modules_str = load_match.group(1)
+            for item_match in _MODULE_ITEM_PATTERN.finditer(modules_str):
+                name = item_match.group(1)
+                version = item_match.group(2)
+                if version:
+                    pinned[name][version].append(path)
+                else:
+                    unpinned[name].append(path)
+    return {"pinned": dict(pinned), "unpinned": dict(unpinned)}
+
+
+_R_BASE_IN_LOCK_PATTERN = re.compile(r"\br-base\b")
+_CONDA_LOCK_FILES = ("pixi.lock", "conda-lock.yml")
+
+
+def _conda_lock_manages_r(project_root: Path) -> bool:
+    """Return True if pixi.lock or conda-lock.yml lists r-base as a managed package."""
+    for name in _CONDA_LOCK_FILES:
+        path = project_root / name
+        if path.exists() and _R_BASE_IN_LOCK_PATTERN.search(_read_text(path)):
+            return True
+    return False
+
+
 def detect_environment_reproducibility(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
-    suffixes = {path.suffix.lower() for path in files}
     has_r = any(path.suffix.lower() in {".r", ".qmd", ".rmd"} for path in files)
     has_python = any(path.suffix.lower() == ".py" for path in files)
     env_config = config.get("environment", {})
+    module_data = _collect_module_loads(files)
+    pinned = module_data["pinned"]
+    unpinned = module_data["unpinned"]
+
+    # R lockfile check — local reproducibility concern, always fires if lockfile absent
     if has_r:
         lockfiles = env_config.get("r", {}).get("lockfiles", ["renv.lock"])
-        if not any((project_root / lockfile).exists() for lockfile in lockfiles):
+        if not any((project_root / lockfile).exists() for lockfile in lockfiles) and not _conda_lock_manages_r(project_root):
             findings.append(
                 make_finding(
                     dimension="environment_reproducibility",
@@ -665,6 +722,27 @@ def detect_environment_reproducibility(project_root: Path, config: dict, files: 
                     score_impact=12,
                 )
             )
+            # Cluster advisory: if pinned module loads exist, note local dev gap separately
+            r_pinned = pinned.get("R", {})
+            if r_pinned:
+                findings.append(
+                    make_finding(
+                        dimension="cluster_environment",
+                        severity="low",
+                        title="R cluster environment pinned via module load — consider renv for local dev",
+                        detail=(
+                            "Version-pinned `module load R/...` statements satisfy cluster reproducibility. "
+                            "An `renv.lock` would additionally cover local development reproducibility."
+                        ),
+                        remediation=(
+                            "Consider adopting `renv` for local development reproducibility. "
+                            "The module load already handles cluster execution."
+                        ),
+                        score_impact=3,
+                    )
+                )
+
+    # Python lockfile check — local reproducibility concern, always fires if lockfile absent
     if has_python:
         lockfiles = env_config.get("python", {}).get("lockfiles", ["pixi.lock"])
         py_manager = env_config.get("python", {}).get("manager", "pixi")
@@ -681,11 +759,74 @@ def detect_environment_reproducibility(project_root: Path, config: dict, files: 
                     score_impact=12,
                 )
             )
+            # Cluster advisory: if pinned module loads exist, note local dev gap separately
+            py_pinned = {k: v for k, v in pinned.items() if k.lower() in ("python", "python3")}
+            if py_pinned:
+                findings.append(
+                    make_finding(
+                        dimension="cluster_environment",
+                        severity="low",
+                        title="Python cluster environment pinned via module load — consider pixi for local dev",
+                        detail=(
+                            "Version-pinned `module load python/...` statements satisfy cluster reproducibility. "
+                            "A `pixi.lock` would additionally cover local development reproducibility."
+                        ),
+                        remediation="Consider adopting `pixi` for local development reproducibility.",
+                        score_impact=3,
+                    )
+                )
+
+    # Unpinned module loads — cluster env concern
+    for module_name, paths_list in unpinned.items():
+        example = paths_list[0].name
+        findings.append(
+            make_finding(
+                dimension="cluster_environment",
+                severity="medium",
+                title=f"Module loaded without version pin: `{module_name}`",
+                detail=(
+                    f"`module load {module_name}` (no version) found in submission scripts "
+                    f"(e.g. `{example}`). The loaded version is cluster-default and may change silently."
+                ),
+                remediation=f"Pin the version explicitly: `module load {module_name}/<version>`.",
+                score_impact=8,
+            )
+        )
+
+    # Version inconsistency across scripts — cluster env concern
+    for module_name, version_map in pinned.items():
+        if len(version_map) > 1:
+            version_summary = ", ".join(
+                f"`{v}` ({p[0].name})" for v, p in sorted(version_map.items())
+            )
+            findings.append(
+                make_finding(
+                    dimension="cluster_environment",
+                    severity="high",
+                    title=f"Module version inconsistent across scripts: `{module_name}`",
+                    detail=(
+                        f"Different scripts load different versions of `{module_name}`: "
+                        f"{version_summary}. Results depend on which script ran."
+                    ),
+                    remediation=f"Standardize all submission scripts to load the same version of `{module_name}`.",
+                    score_impact=12,
+                )
+            )
+
     return findings
 
 
-def detect_path_portability(project_root: Path, files: list[Path]) -> list[Finding]:
+def _extract_path_token(text: str, start: int) -> str:
+    """Extract a path token from `text` starting at `start` until whitespace or quote."""
+    end = start
+    while end < len(text) and text[end] not in (" ", "\t", "\n", '"', "'", ";", ")"):
+        end += 1
+    return text[start:end]
+
+
+def detect_path_portability(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
+    allowed_prefixes: list[str] = config.get("path_portability", {}).get("allowed_prefixes", [])
     for path in files:
         if path.suffix not in SCRIPT_SUFFIXES:
             continue
@@ -701,6 +842,27 @@ def detect_path_portability(project_root: Path, files: list[Path]) -> list[Findi
                         title="Absolute path embedded in project source",
                         detail=f"{rel} contains a machine-specific absolute path.",
                         remediation="Replace absolute paths with project-root-relative paths or configured path variables.",
+                        score_impact=12,
+                        path=rel,
+                    )
+                )
+                found_issue = True
+                break
+        if not found_issue:
+            for match in HPC_PATH_ROOT_PATTERN.finditer(text):
+                path_token = _extract_path_token(text, match.start())
+                if allowed_prefixes and any(path_token.startswith(p) for p in allowed_prefixes):
+                    continue
+                findings.append(
+                    make_finding(
+                        dimension="path_portability",
+                        severity="high",
+                        title="HPC cluster path hardcoded in project source",
+                        detail=f"{rel} contains a hardcoded HPC filesystem path (`{path_token}`).",
+                        remediation=(
+                            "Replace with an environment variable such as `$SCRATCH`, `$WORK`, "
+                            "or declare the prefix in `.econharness.yml` under `path_portability.allowed_prefixes`."
+                        ),
                         score_impact=12,
                         path=rel,
                     )
@@ -731,6 +893,150 @@ def detect_path_portability(project_root: Path, files: list[Path]) -> list[Findi
                     detail=f"{rel} uses `cd`, which often bakes machine-specific project-root assumptions into the workflow.",
                     remediation="Resolve project paths from a declared root or config instead of changing directories inside `.do` files.",
                     score_impact=6,
+                    path=rel,
+                )
+            )
+    return findings
+
+
+_SBATCH_PATTERN = re.compile(r"^#SBATCH\b", re.MULTILINE)
+_SET_E_BODY_PATTERN = re.compile(r"(?m)(?:^|\s)set\s+(?:-[a-zA-Z]*e[a-zA-Z]*\b|-o\s+errexit)")
+_SHEBANG_DASH_E_PATTERN = re.compile(r"^#!.*\bbash\b.*\s-[a-zA-Z]*e(?:\s|$)")
+BATCH_SCRIPT_SUFFIXES = {".sh", ".slurm", ".job"}
+
+
+def detect_hpc_batch_script_health(project_root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for path in files:
+        if path.suffix not in BATCH_SCRIPT_SUFFIXES:
+            continue
+        text = _read_text(path)
+        if not _SBATCH_PATTERN.search(text):
+            continue
+        first_line = text.split("\n", 1)[0]
+        if _SHEBANG_DASH_E_PATTERN.match(first_line):
+            continue
+        if _SET_E_BODY_PATTERN.search(text):
+            continue
+        rel = path.relative_to(project_root).as_posix()
+        findings.append(
+            make_finding(
+                dimension="path_portability",
+                severity="medium",
+                title="Batch script missing `set -e`",
+                detail=(
+                    f"{rel} is a Slurm batch script without `set -e`. "
+                    "A failed command will be silently swallowed and the job will continue."
+                ),
+                remediation=(
+                    "Add `set -e` near the top of the script so that any failed command "
+                    "causes the job to exit immediately with a non-zero code."
+                ),
+                score_impact=7,
+                path=rel,
+            )
+        )
+    return findings
+
+
+ARRAY_SCRIPT_SUFFIXES = {".sh", ".slurm", ".job"}
+_TASK_ID_PATTERN = re.compile(r"\$\{?SLURM_ARRAY_TASK_ID\}?")
+# Shell redirections and common HPC output flags
+_OUTPUT_REDIRECT_PATTERN = re.compile(
+    r"(?:>>?)\s*(\S+)"
+    r"|(?:-o|--output(?:=|\s))(\S+)"
+    r"|(?:-e(?:=|\s)|--error(?:=|\s))(\S+)",
+)
+_DOCUMENTATION_COMMENT_PATTERN = re.compile(r"^\s*#(?!SBATCH)", re.MULTILINE)
+_NEARBY_WINDOW = 5  # lines above/below task ID usage to look for a comment
+
+
+def detect_job_array_expansion(project_root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for path in files:
+        if path.suffix not in ARRAY_SCRIPT_SUFFIXES:
+            continue
+        text = _read_text(path)
+        if not _SBATCH_PATTERN.search(text):
+            continue
+        if not _TASK_ID_PATTERN.search(text):
+            continue
+        rel = path.relative_to(project_root).as_posix()
+        lines = text.splitlines()
+
+        # ── Collision check: output paths that don't include $SLURM_ARRAY_TASK_ID ──
+        collision_found = False
+        for match in _OUTPUT_REDIRECT_PATTERN.finditer(text):
+            output_path_str = match.group(1) or match.group(2) or match.group(3) or ""
+            if not output_path_str:
+                continue
+            # Skip #SBATCH directive lines (use Slurm %a/%A substitution, not shell vars)
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_text = text[line_start:text.find("\n", match.start())]
+            if line_text.lstrip().startswith("#SBATCH"):
+                continue
+            # If the path contains any shell variable reference the author intentionally
+            # parameterized it — we cannot trace variable assignments, so trust it.
+            if "$" in output_path_str:
+                continue
+            findings.append(
+                make_finding(
+                    dimension="path_portability",
+                    severity="medium",
+                    title="Job array script may write to same output path from all tasks",
+                    detail=(
+                        f"{rel} uses `$SLURM_ARRAY_TASK_ID` but may write to "
+                        f"`{output_path_str}` without including the task ID in the path. "
+                        "All tasks could overwrite each other's output."
+                    ),
+                    remediation=(
+                        "Include `$SLURM_ARRAY_TASK_ID` in the output filename: "
+                        "e.g. `results_${SLURM_ARRAY_TASK_ID}.csv`."
+                    ),
+                    score_impact=10,
+                    path=rel,
+                )
+            )
+            collision_found = True
+            break  # one collision finding per file is sufficient
+
+        # ── Undocumented mapping: no comment near any $SLURM_ARRAY_TASK_ID usage ──
+        task_id_linenos = [
+            i for i, line in enumerate(lines)
+            if _TASK_ID_PATTERN.search(line)
+        ]
+        has_nearby_comment = False
+        for lineno in task_id_linenos:
+            window_start = max(0, lineno - _NEARBY_WINDOW)
+            window_end = min(len(lines), lineno + _NEARBY_WINDOW + 1)
+            for nearby in lines[window_start:window_end]:
+                stripped = nearby.strip()
+                # A non-SBATCH, non-shebang comment counts as documentation
+                if (
+                    stripped.startswith("#")
+                    and not stripped.startswith("#SBATCH")
+                    and not stripped.startswith("#!")
+                ):
+                    has_nearby_comment = True
+                    break
+            if has_nearby_comment:
+                break
+
+        if not has_nearby_comment and task_id_linenos:
+            findings.append(
+                make_finding(
+                    dimension="path_portability",
+                    severity="low",
+                    title="Job array index-to-parameter mapping is undocumented",
+                    detail=(
+                        f"{rel} uses `$SLURM_ARRAY_TASK_ID` with no nearby comment "
+                        "explaining what each index value represents."
+                    ),
+                    remediation=(
+                        "Add a comment near the `$SLURM_ARRAY_TASK_ID` usage explaining the mapping, "
+                        "e.g.: `# Index N corresponds to country N in params/countries.csv`."
+                    ),
+                    score_impact=3,
                     path=rel,
                 )
             )
