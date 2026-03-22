@@ -92,6 +92,45 @@ class ModuleLoadRLockfileTests(unittest.TestCase):
         self.assertEqual(unpinned_f[0].dimension, "cluster_environment")
 
 
+class PixiCondaManagesRTests(unittest.TestCase):
+    """pixi.lock or conda-lock.yml with r-base is an acceptable substitute for renv.lock."""
+
+    def test_pixi_lock_with_r_base_suppresses_r_lockfile_finding(self) -> None:
+        root = _make_project({
+            "analysis.R": "x <- 1\n",
+            "pixi.lock": "- name: r-base\n  version: 4.3.3\n- name: r-ggplot2\n  version: 3.4.0\n",
+        })
+        findings = _scan(root)
+        lockfile_f = [f for f in findings if "Missing R" in f.title]
+        self.assertEqual(lockfile_f, [])
+
+    def test_pixi_lock_python_only_still_fires_r_finding(self) -> None:
+        """pixi.lock present but only tracking Python — R is still untracked."""
+        root = _make_project({
+            "analysis.R": "x <- 1\n",
+            "pixi.lock": "- name: python\n  version: 3.11.0\n- name: numpy\n  version: 1.26.0\n",
+        })
+        findings = _scan(root)
+        lockfile_f = [f for f in findings if "Missing R" in f.title]
+        self.assertEqual(len(lockfile_f), 1)
+        self.assertEqual(lockfile_f[0].severity, "medium")
+
+    def test_conda_lock_with_r_base_suppresses_r_lockfile_finding(self) -> None:
+        root = _make_project({
+            "analysis.R": "x <- 1\n",
+            "conda-lock.yml": "package:\n- name: r-base\n  version: 4.3.1\n",
+        })
+        findings = _scan(root)
+        lockfile_f = [f for f in findings if "Missing R" in f.title]
+        self.assertEqual(lockfile_f, [])
+
+    def test_no_lock_file_at_all_still_fires(self) -> None:
+        root = _make_project({"analysis.R": "x <- 1\n"})
+        findings = _scan(root)
+        lockfile_f = [f for f in findings if "Missing R" in f.title]
+        self.assertEqual(len(lockfile_f), 1)
+
+
 class ModuleLoadUnpinnedTests(unittest.TestCase):
     """R4: unpinned module load raises a distinct medium finding."""
 

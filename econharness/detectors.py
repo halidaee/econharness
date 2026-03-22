@@ -686,6 +686,19 @@ def _collect_module_loads(files: list[Path]) -> dict[str, dict]:
     return {"pinned": dict(pinned), "unpinned": dict(unpinned)}
 
 
+_R_BASE_IN_LOCK_PATTERN = re.compile(r"\br-base\b")
+_CONDA_LOCK_FILES = ("pixi.lock", "conda-lock.yml")
+
+
+def _conda_lock_manages_r(project_root: Path) -> bool:
+    """Return True if pixi.lock or conda-lock.yml lists r-base as a managed package."""
+    for name in _CONDA_LOCK_FILES:
+        path = project_root / name
+        if path.exists() and _R_BASE_IN_LOCK_PATTERN.search(_read_text(path)):
+            return True
+    return False
+
+
 def detect_environment_reproducibility(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
     has_r = any(path.suffix.lower() in {".r", ".qmd", ".rmd"} for path in files)
@@ -698,7 +711,7 @@ def detect_environment_reproducibility(project_root: Path, config: dict, files: 
     # R lockfile check — local reproducibility concern, always fires if lockfile absent
     if has_r:
         lockfiles = env_config.get("r", {}).get("lockfiles", ["renv.lock"])
-        if not any((project_root / lockfile).exists() for lockfile in lockfiles):
+        if not any((project_root / lockfile).exists() for lockfile in lockfiles) and not _conda_lock_manages_r(project_root):
             findings.append(
                 make_finding(
                     dimension="environment_reproducibility",
