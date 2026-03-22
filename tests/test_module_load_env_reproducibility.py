@@ -28,7 +28,7 @@ def _titles(findings: list) -> list[str]:
 
 
 class ModuleLoadRLockfileTests(unittest.TestCase):
-    """R2: version-pinned R module load downgrades medium → low."""
+    """Cluster env reproducibility and local lockfile findings score independently."""
 
     def test_r_files_no_renv_no_modules_gives_medium(self) -> None:
         """Existing behavior unchanged when no submission scripts present."""
@@ -38,23 +38,31 @@ class ModuleLoadRLockfileTests(unittest.TestCase):
         self.assertEqual(findings[0].severity, "medium")
         self.assertIn("Missing R environment lockfile", findings[0].title)
 
-    def test_r_files_no_renv_pinned_module_gives_low(self) -> None:
-        root = _make_project({
-            "analysis.R": "x <- 1\n",
-            "run.slurm": "#!/bin/bash\n#SBATCH --job-name=x\nmodule load R/4.3.1\nRscript analysis.R\n",
-        })
-        findings = [f for f in _scan(root) if "R environment" in f.title or "lockfile" in f.title]
-        r_lockfile_findings = [f for f in findings if "renv" in f.title.lower() or "R environment" in f.title]
-        self.assertTrue(any(f.severity == "low" for f in _scan(root) if "module load" in f.detail.lower() or "renv" in f.title.lower() or "R environment" in f.title))
+    def test_r_files_no_renv_pinned_module_lockfile_still_medium(self) -> None:
+        """Pinned module load does NOT downgrade the missing lockfile finding.
 
-    def test_r_files_no_renv_pinned_module_downgraded_not_medium(self) -> None:
+        The lockfile (local reproducibility) and module load (cluster reproducibility)
+        are independent concerns. A pinned module load does not substitute for renv.lock.
+        """
         root = _make_project({
             "analysis.R": "x <- 1\n",
             "run.slurm": "#!/bin/bash\n#SBATCH --job-name=x\nmodule load R/4.3.1\nRscript analysis.R\n",
         })
         findings = _scan(root)
-        r_findings = [f for f in findings if "R environment" in f.title or "renv" in f.title.lower()]
-        self.assertTrue(all(f.severity != "medium" for f in r_findings))
+        lockfile_f = [f for f in findings if "Missing R" in f.title]
+        self.assertEqual(len(lockfile_f), 1)
+        self.assertEqual(lockfile_f[0].severity, "medium")
+        self.assertEqual(lockfile_f[0].dimension, "environment_reproducibility")
+
+    def test_r_files_no_renv_pinned_module_cluster_advisory_is_low(self) -> None:
+        """A low cluster advisory fires in cluster_environment when renv.lock is absent."""
+        root = _make_project({
+            "analysis.R": "x <- 1\n",
+            "run.slurm": "#!/bin/bash\n#SBATCH --job-name=x\nmodule load R/4.3.1\nRscript analysis.R\n",
+        })
+        findings = _scan(root)
+        cluster_f = [f for f in findings if f.dimension == "cluster_environment"]
+        self.assertTrue(any(f.severity == "low" for f in cluster_f))
 
     def test_r_files_renv_present_no_finding(self) -> None:
         """R6: renv.lock + pinned module = no lockfile finding."""
@@ -68,7 +76,7 @@ class ModuleLoadRLockfileTests(unittest.TestCase):
         self.assertEqual(lockfile_findings, [])
 
     def test_r_files_no_renv_unpinned_module_gives_medium_lockfile(self) -> None:
-        """Unpinned module load → medium lockfile finding (no downgrade) + medium unpinned finding."""
+        """Unpinned module → medium lockfile in environment_reproducibility + medium unpinned in cluster_environment."""
         root = _make_project({
             "analysis.R": "x <- 1\n",
             "run.slurm": "#!/bin/bash\n#SBATCH --job-name=x\nmodule load R\nRscript analysis.R\n",
@@ -78,8 +86,10 @@ class ModuleLoadRLockfileTests(unittest.TestCase):
         unpinned_f = [f for f in findings if "without version pin" in f.title]
         self.assertEqual(len(lockfile_f), 1)
         self.assertEqual(lockfile_f[0].severity, "medium")
+        self.assertEqual(lockfile_f[0].dimension, "environment_reproducibility")
         self.assertEqual(len(unpinned_f), 1)
         self.assertEqual(unpinned_f[0].severity, "medium")
+        self.assertEqual(unpinned_f[0].dimension, "cluster_environment")
 
 
 class ModuleLoadUnpinnedTests(unittest.TestCase):
@@ -94,6 +104,7 @@ class ModuleLoadUnpinnedTests(unittest.TestCase):
         self.assertEqual(len(unpinned), 1)
         self.assertEqual(unpinned[0].severity, "medium")
         self.assertIn("R", unpinned[0].title)
+        self.assertEqual(unpinned[0].dimension, "cluster_environment")
 
     def test_ml_shorthand_parsed(self) -> None:
         """ml is the shorthand for module load."""
@@ -129,6 +140,7 @@ class ModuleLoadVersionInconsistencyTests(unittest.TestCase):
         self.assertIn("R", inconsistent[0].title)
         self.assertIn("4.2", inconsistent[0].detail)
         self.assertIn("4.3.1", inconsistent[0].detail)
+        self.assertEqual(inconsistent[0].dimension, "cluster_environment")
 
     def test_gcc_version_inconsistency_flagged(self) -> None:
         """R7: version inconsistency applies to any module, not just R/Python."""
@@ -140,6 +152,7 @@ class ModuleLoadVersionInconsistencyTests(unittest.TestCase):
         inconsistent = [f for f in findings if "inconsistent" in f.title]
         self.assertEqual(len(inconsistent), 1)
         self.assertIn("gcc", inconsistent[0].title)
+        self.assertEqual(inconsistent[0].dimension, "cluster_environment")
 
     def test_consistent_versions_no_inconsistency_finding(self) -> None:
         root = _make_project({

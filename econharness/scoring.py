@@ -12,6 +12,7 @@ DIMENSION_WEIGHTS = {
     "directory_and_stage_structure": 14.0,
     "relational_data_discipline": 18.0,
     "environment_reproducibility": 10.0,
+    "cluster_environment": 6.0,
     "path_portability": 8.0,
     "artifact_traceability": 8.0,
     "version_control_discipline": 5.0,

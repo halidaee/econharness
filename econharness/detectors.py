@@ -695,81 +695,80 @@ def detect_environment_reproducibility(project_root: Path, config: dict, files: 
     pinned = module_data["pinned"]
     unpinned = module_data["unpinned"]
 
-    # R lockfile check (with module load downgrade logic)
+    # R lockfile check — local reproducibility concern, always fires if lockfile absent
     if has_r:
         lockfiles = env_config.get("r", {}).get("lockfiles", ["renv.lock"])
         if not any((project_root / lockfile).exists() for lockfile in lockfiles):
+            findings.append(
+                make_finding(
+                    dimension="environment_reproducibility",
+                    severity="medium",
+                    title="Missing R environment lockfile",
+                    detail="R or Quarto files are present, but no declared R lockfile such as `renv.lock` was found.",
+                    remediation="Adopt `renv` or another declared lockfile-backed R environment manager.",
+                    score_impact=12,
+                )
+            )
+            # Cluster advisory: if pinned module loads exist, note local dev gap separately
             r_pinned = pinned.get("R", {})
             if r_pinned:
                 findings.append(
                     make_finding(
-                        dimension="environment_reproducibility",
+                        dimension="cluster_environment",
                         severity="low",
-                        title="R environment pinned via module load but no renv.lock",
+                        title="R cluster environment pinned via module load — consider renv for local dev",
                         detail=(
-                            "R files are present. Version-pinned `module load R/...` statements were found "
-                            "in submission scripts, which satisfies cluster reproducibility. "
-                            "An `renv.lock` would additionally cover local development."
+                            "Version-pinned `module load R/...` statements satisfy cluster reproducibility. "
+                            "An `renv.lock` would additionally cover local development reproducibility."
                         ),
                         remediation=(
                             "Consider adopting `renv` for local development reproducibility. "
                             "The module load already handles cluster execution."
                         ),
-                        score_impact=5,
-                    )
-                )
-            else:
-                findings.append(
-                    make_finding(
-                        dimension="environment_reproducibility",
-                        severity="medium",
-                        title="Missing R environment lockfile",
-                        detail="R or Quarto files are present, but no declared R lockfile such as `renv.lock` was found.",
-                        remediation="Adopt `renv` or another declared lockfile-backed R environment manager.",
-                        score_impact=12,
+                        score_impact=3,
                     )
                 )
 
-    # Python lockfile check (with module load downgrade logic)
+    # Python lockfile check — local reproducibility concern, always fires if lockfile absent
     if has_python:
         lockfiles = env_config.get("python", {}).get("lockfiles", ["pixi.lock"])
         py_manager = env_config.get("python", {}).get("manager", "pixi")
         manager_hint = project_root / "pixi.toml"
         has_declared_lock = any((project_root / lockfile).exists() for lockfile in lockfiles)
         if not has_declared_lock or (py_manager == "pixi" and not manager_hint.exists()):
+            findings.append(
+                make_finding(
+                    dimension="environment_reproducibility",
+                    severity="medium",
+                    title="Missing Python reproducible environment metadata",
+                    detail="Python files are present, but no declared lockfile-backed environment such as `pixi.toml` + `pixi.lock` was found.",
+                    remediation="Adopt `pixi` or another declared lockfile-backed Python environment manager.",
+                    score_impact=12,
+                )
+            )
+            # Cluster advisory: if pinned module loads exist, note local dev gap separately
             py_pinned = {k: v for k, v in pinned.items() if k.lower() in ("python", "python3")}
             if py_pinned:
                 findings.append(
                     make_finding(
-                        dimension="environment_reproducibility",
+                        dimension="cluster_environment",
                         severity="low",
-                        title="Python environment pinned via module load but no pixi.lock",
+                        title="Python cluster environment pinned via module load — consider pixi for local dev",
                         detail=(
-                            "Python files are present. Version-pinned `module load python/...` statements were found "
-                            "in submission scripts. A `pixi.lock` would additionally cover local development."
+                            "Version-pinned `module load python/...` statements satisfy cluster reproducibility. "
+                            "A `pixi.lock` would additionally cover local development reproducibility."
                         ),
                         remediation="Consider adopting `pixi` for local development reproducibility.",
-                        score_impact=5,
-                    )
-                )
-            else:
-                findings.append(
-                    make_finding(
-                        dimension="environment_reproducibility",
-                        severity="medium",
-                        title="Missing Python reproducible environment metadata",
-                        detail="Python files are present, but no declared lockfile-backed environment such as `pixi.toml` + `pixi.lock` was found.",
-                        remediation="Adopt `pixi` or another declared lockfile-backed Python environment manager.",
-                        score_impact=12,
+                        score_impact=3,
                     )
                 )
 
-    # Unpinned module loads (distinct medium finding, fires regardless of lockfile)
+    # Unpinned module loads — cluster env concern
     for module_name, paths_list in unpinned.items():
         example = paths_list[0].name
         findings.append(
             make_finding(
-                dimension="environment_reproducibility",
+                dimension="cluster_environment",
                 severity="medium",
                 title=f"Module loaded without version pin: `{module_name}`",
                 detail=(
@@ -781,7 +780,7 @@ def detect_environment_reproducibility(project_root: Path, config: dict, files: 
             )
         )
 
-    # Version inconsistency across scripts (high severity, applies to any module)
+    # Version inconsistency across scripts — cluster env concern
     for module_name, version_map in pinned.items():
         if len(version_map) > 1:
             version_summary = ", ".join(
@@ -789,7 +788,7 @@ def detect_environment_reproducibility(project_root: Path, config: dict, files: 
             )
             findings.append(
                 make_finding(
-                    dimension="environment_reproducibility",
+                    dimension="cluster_environment",
                     severity="high",
                     title=f"Module version inconsistent across scripts: `{module_name}`",
                     detail=(
