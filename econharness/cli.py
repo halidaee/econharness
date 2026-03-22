@@ -87,6 +87,10 @@ def create_parser() -> argparse.ArgumentParser:
     restore_q.add_argument("--path", default=".")
     restore_q.add_argument("--quarantine-dir", default=None, help="Quarantine directory timestamp to restore")
 
+    check_config = subparsers.add_parser("check-config", help="Validate the .econharness.yml config file")
+    check_config.add_argument("--path", default=".")
+    check_config.add_argument("--json", action="store_true", help="Emit JSON output")
+
     review = subparsers.add_parser("review", help="Emit a heuristic research-structure review summary")
     review.add_argument("--path", default=".")
 
@@ -107,7 +111,30 @@ def main() -> None:
 
     project_root = _resolve_path(getattr(args, "path", "."))
 
+    if args.command == "check-config":
+        from econharness.config_validator import validate_config_path
+        errors, warnings = validate_config_path(project_root)
+        if args.json:
+            print(json.dumps({"valid": not bool(errors), "errors": errors, "warnings": warnings}))
+        else:
+            for e in errors:
+                print(f"Error: {e}")
+            for w in warnings:
+                print(f"Warning: {w}")
+            if not errors:
+                print("Config OK")
+        sys.exit(1 if errors else 0)
+
     if args.command == "scan":
+        from econharness.config_validator import validate_config_path
+        val_errors, _val_warnings = validate_config_path(project_root)
+        if val_errors:
+            msg = "Config error: fix .econharness.yml before scanning (run econharness check-config for details)"
+            if args.json:
+                print(json.dumps({"error": msg}))
+            else:
+                print(msg)
+            sys.exit(1)
         result = scan_project(project_root)
         save_scan_result(project_root, result)
         svg_path, html_path = generate_scorecard(result, project_root)
