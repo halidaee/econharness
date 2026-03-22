@@ -107,6 +107,44 @@ class CollisionTests(unittest.TestCase):
         collision = [f for f in _scan(root) if "same output path" in f.title]
         self.assertEqual(collision, [])
 
+    def test_variable_path_not_flagged_as_collision(self) -> None:
+        """Output path is a $VAR reference — may be derived from task ID, trust it."""
+        root = _make_project({
+            "run.slurm": (
+                "#!/bin/bash\n#SBATCH --array=0-9\n"
+                "# index = model spec\n"
+                "export OUT_DIR=\"results/${SLURM_ARRAY_TASK_ID}\"\n"
+                "python run.py > $OUT_DIR/output.csv\n"
+            )
+        })
+        collision = [f for f in _scan(root) if "same output path" in f.title]
+        self.assertEqual(collision, [])
+
+    def test_braced_variable_path_not_flagged_as_collision(self) -> None:
+        """${VAR} form of variable reference — must also be suppressed."""
+        root = _make_project({
+            "run.slurm": (
+                "#!/bin/bash\n#SBATCH --array=0-4\n"
+                "# index = country\n"
+                "A2_OUTPUT_DIR=\"results/${SCOPE}\"\n"
+                "Rscript model.R $SLURM_ARRAY_TASK_ID > ${A2_OUTPUT_DIR}/result.csv\n"
+            )
+        })
+        collision = [f for f in _scan(root) if "same output path" in f.title]
+        self.assertEqual(collision, [])
+
+    def test_literal_path_still_flagged(self) -> None:
+        """A completely literal path (no $ at all) is the true positive case."""
+        root = _make_project({
+            "run.slurm": (
+                "#!/bin/bash\n#SBATCH --array=0-9\n"
+                "# index = spec\n"
+                "python run.py $SLURM_ARRAY_TASK_ID > results/output.csv\n"
+            )
+        })
+        collision = [f for f in _scan(root) if "same output path" in f.title]
+        self.assertEqual(len(collision), 1)
+
     def test_job_suffix_scanned(self) -> None:
         root = _make_project({
             "run.job": (

@@ -963,8 +963,9 @@ def detect_job_array_expansion(project_root: Path, files: list[Path]) -> list[Fi
             line_text = text[line_start:text.find("\n", match.start())]
             if line_text.lstrip().startswith("#SBATCH"):
                 continue
-            # If the path directly contains $SLURM_ARRAY_TASK_ID it's disambiguated
-            if _TASK_ID_PATTERN.search(output_path_str):
+            # If the path contains any shell variable reference the author intentionally
+            # parameterized it — we cannot trace variable assignments, so trust it.
+            if "$" in output_path_str:
                 continue
             findings.append(
                 make_finding(
