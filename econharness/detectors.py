@@ -768,6 +768,46 @@ def detect_path_portability(project_root: Path, config: dict, files: list[Path])
     return findings
 
 
+_SBATCH_PATTERN = re.compile(r"^#SBATCH\b", re.MULTILINE)
+_SET_E_BODY_PATTERN = re.compile(r"(?m)(?:^|\s)set\s+(?:-[a-zA-Z]*e[a-zA-Z]*\b|-o\s+errexit)")
+_SHEBANG_DASH_E_PATTERN = re.compile(r"^#!.*\bbash\b.*\s-[a-zA-Z]*e(?:\s|$)")
+BATCH_SCRIPT_SUFFIXES = {".sh", ".slurm", ".job"}
+
+
+def detect_hpc_batch_script_health(project_root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for path in files:
+        if path.suffix not in BATCH_SCRIPT_SUFFIXES:
+            continue
+        text = _read_text(path)
+        if not _SBATCH_PATTERN.search(text):
+            continue
+        first_line = text.split("\n", 1)[0]
+        if _SHEBANG_DASH_E_PATTERN.match(first_line):
+            continue
+        if _SET_E_BODY_PATTERN.search(text):
+            continue
+        rel = path.relative_to(project_root).as_posix()
+        findings.append(
+            make_finding(
+                dimension="path_portability",
+                severity="medium",
+                title="Batch script missing `set -e`",
+                detail=(
+                    f"{rel} is a Slurm batch script without `set -e`. "
+                    "A failed command will be silently swallowed and the job will continue."
+                ),
+                remediation=(
+                    "Add `set -e` near the top of the script so that any failed command "
+                    "causes the job to exit immediately with a non-zero code."
+                ),
+                score_impact=7,
+                path=rel,
+            )
+        )
+    return findings
+
+
 def detect_version_control_discipline(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
 
