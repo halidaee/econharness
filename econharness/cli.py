@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from econharness.config import config_path_for, render_default_config
@@ -60,12 +62,15 @@ def create_parser() -> argparse.ArgumentParser:
 
     scan = subparsers.add_parser("scan", help="Scan a project and persist findings")
     scan.add_argument("--path", default=".")
+    scan.add_argument("--json", action="store_true", help="Emit JSON output")
 
     status = subparsers.add_parser("status", help="Show persisted project status")
     status.add_argument("--path", default=".")
+    status.add_argument("--json", action="store_true", help="Emit JSON output")
 
     next_cmd = subparsers.add_parser("next", help="Show the next highest-priority finding")
     next_cmd.add_argument("--path", default=".")
+    next_cmd.add_argument("--json", action="store_true", help="Emit JSON output")
 
     verify = subparsers.add_parser("verify", help="Run a configured fast or full verification command")
     verify.add_argument("--path", default=".")
@@ -101,21 +106,54 @@ def main() -> None:
         result = scan_project(project_root)
         save_scan_result(project_root, result)
         svg_path, html_path = generate_scorecard(result, project_root)
-        _print_scan(result)
-        print(f"Scorecard SVG: {svg_path}")
-        print(f"Scorecard HTML: {html_path}")
+        if args.json:
+            payload = {
+                "project_root": result.project_root,
+                "overall_score": result.overall_score,
+                "dimension_scores": result.dimension_scores,
+                "findings": [asdict(f) for f in result.findings],
+                "summary": result.summary,
+            }
+            print(json.dumps(payload))
+        else:
+            _print_scan(result)
+            print(f"Scorecard SVG: {svg_path}")
+            print(f"Scorecard HTML: {html_path}")
         return
 
     if args.command == "status":
         state = load_state(project_root)
         if not state:
+            if args.json:
+                print(json.dumps({"error": "No scan state found. Run econharness scan first."}))
+                sys.exit(1)
             print("No scan state found. Run `econharness scan` first.")
             return
-        _print_status(state)
+        if args.json:
+            payload = {
+                "project_root": state["project_root"],
+                "overall_score": state["overall_score"],
+                "dimension_scores": state.get("dimension_scores", {}),
+                "findings": len(state.get("findings", [])),
+                "scanned_at": state.get("scanned_at"),
+            }
+            print(json.dumps(payload))
+        else:
+            _print_status(state)
         return
 
     if args.command == "next":
-        _print_next(project_root)
+        findings = findings_from_state(project_root)
+        if args.json:
+            if not findings:
+                print(json.dumps({"error": "No findings. Run econharness scan first."}))
+                sys.exit(1)
+            finding = findings[0]
+            payload = asdict(finding)
+            payload["remaining"] = len(findings)
+            print(json.dumps(payload))
+        else:
+            _print_next(project_root)
         return
 
     if args.command == "verify":

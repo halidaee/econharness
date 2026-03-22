@@ -418,5 +418,62 @@ class HarnessTests(unittest.TestCase):
             self.assertNotIn("Repeated derived lookup reconstruction across scripts", titles)
 
 
+    def _run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "econharness", *args],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_scan_json_output(self) -> None:
+        project = FIXTURES / "good_project"
+        result = self._run("scan", "--path", str(project), "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertIn("project_root", payload)
+        self.assertIn("overall_score", payload)
+        self.assertIn("dimension_scores", payload)
+        self.assertIsInstance(payload["findings"], list)
+        self.assertIn("summary", payload)
+        # Scorecard paths should not appear in stdout when --json
+        self.assertNotIn("Scorecard SVG", result.stdout)
+
+    def test_status_json_output(self) -> None:
+        project = FIXTURES / "good_project"
+        # Ensure state exists first
+        self._run("scan", "--path", str(project))
+        result = self._run("status", "--path", str(project), "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertIn("project_root", payload)
+        self.assertIn("overall_score", payload)
+        self.assertIn("dimension_scores", payload)
+        self.assertIsInstance(payload["findings"], int)
+
+    def test_status_json_no_state_emits_error(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self._run("status", "--path", tmpdir, "--json")
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertIn("error", payload)
+
+    def test_next_json_output(self) -> None:
+        project = FIXTURES / "bad_project"
+        # Ensure state exists
+        self._run("scan", "--path", str(project))
+        result = self._run("next", "--path", str(project), "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertIn("id", payload)
+        self.assertIn("dimension", payload)
+        self.assertIn("severity", payload)
+        self.assertIn("title", payload)
+        self.assertIn("remaining", payload)
+        self.assertIsInstance(payload["remaining"], int)
+
+
 if __name__ == "__main__":
     unittest.main()
