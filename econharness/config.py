@@ -63,6 +63,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "node_modules",
     ],
     "ignore": [],
+    "path_portability": {
+        "allowed_prefixes": [],
+    },
 }
 
 

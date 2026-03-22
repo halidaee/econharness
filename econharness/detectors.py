@@ -38,6 +38,7 @@ ABSOLUTE_PATH_PATTERNS = [
     re.compile(r"/Volumes/"),
     re.compile(r"/mnt/"),
 ]
+HPC_PATH_ROOT_PATTERN = re.compile(r"/(?:scratch|gpfs|lustre|beegfs)/")
 MACHINE_SPECIFIC_HINTS = ("Desktop", "Downloads", "Dropbox", "OneDrive", "Documents")
 MANUAL_STEP_PATTERNS = [
     re.compile(r"\bedit (this|the) file by hand\b", re.IGNORECASE),
@@ -45,7 +46,7 @@ MANUAL_STEP_PATTERNS = [
     re.compile(r"\bcopy (this|the) .* into\b", re.IGNORECASE),
     re.compile(r"\brun this manually\b", re.IGNORECASE),
 ]
-SCRIPT_SUFFIXES = {".py", ".R", ".r", ".qmd", ".sh", ".md", ".txt", ".do"}
+SCRIPT_SUFFIXES = {".py", ".R", ".r", ".qmd", ".sh", ".md", ".txt", ".do", ".slurm", ".job"}
 CODE_SUFFIXES = {".py", ".R", ".r", ".sh"}
 PAPER_SUFFIXES = {".qmd", ".Rmd", ".rmd", ".tex", ".md"}
 R_JOIN_FUNCTIONS = {"left_join", "right_join", "inner_join", "full_join"}
@@ -684,8 +685,17 @@ def detect_environment_reproducibility(project_root: Path, config: dict, files: 
     return findings
 
 
-def detect_path_portability(project_root: Path, files: list[Path]) -> list[Finding]:
+def _extract_path_token(text: str, start: int) -> str:
+    """Extract a path token from `text` starting at `start` until whitespace or quote."""
+    end = start
+    while end < len(text) and text[end] not in (" ", "\t", "\n", '"', "'", ";", ")"):
+        end += 1
+    return text[start:end]
+
+
+def detect_path_portability(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
+    allowed_prefixes: list[str] = config.get("path_portability", {}).get("allowed_prefixes", [])
     for path in files:
         if path.suffix not in SCRIPT_SUFFIXES:
             continue
@@ -701,6 +711,27 @@ def detect_path_portability(project_root: Path, files: list[Path]) -> list[Findi
                         title="Absolute path embedded in project source",
                         detail=f"{rel} contains a machine-specific absolute path.",
                         remediation="Replace absolute paths with project-root-relative paths or configured path variables.",
+                        score_impact=12,
+                        path=rel,
+                    )
+                )
+                found_issue = True
+                break
+        if not found_issue:
+            for match in HPC_PATH_ROOT_PATTERN.finditer(text):
+                path_token = _extract_path_token(text, match.start())
+                if allowed_prefixes and any(path_token.startswith(p) for p in allowed_prefixes):
+                    continue
+                findings.append(
+                    make_finding(
+                        dimension="path_portability",
+                        severity="high",
+                        title="HPC cluster path hardcoded in project source",
+                        detail=f"{rel} contains a hardcoded HPC filesystem path (`{path_token}`).",
+                        remediation=(
+                            "Replace with an environment variable such as `$SCRATCH`, `$WORK`, "
+                            "or declare the prefix in `.econharness.yml` under `path_portability.allowed_prefixes`."
+                        ),
                         score_impact=12,
                         path=rel,
                     )

@@ -41,7 +41,7 @@ def scan_project(project_root: Path) -> ScanResult:
     findings.extend(detect_directory_structure(project_root, config))
     findings.extend(detect_raw_data_writes(project_root, config, files))
     findings.extend(detect_environment_reproducibility(project_root, config, files))
-    findings.extend(detect_path_portability(project_root, files))
+    findings.extend(detect_path_portability(project_root, config, files))
     findings.extend(detect_version_control_discipline(project_root, config, files))
     findings.extend(detect_self_documenting_clarity(project_root, files))
     findings.extend(detect_function_state_discipline(project_root, files))
