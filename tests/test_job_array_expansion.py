@@ -133,6 +133,19 @@ class CollisionTests(unittest.TestCase):
         collision = [f for f in _scan(root) if "same output path" in f.title]
         self.assertEqual(collision, [])
 
+    def test_hyphenated_word_with_e_prefix_not_matched(self) -> None:
+        """'-e' inside a hyphenated word (e.g. r-env) must not be treated as -e flag."""
+        root = _make_project({
+            "run.slurm": (
+                "#!/bin/bash\n#SBATCH --array=0-9\n"
+                "# index = model spec\n"
+                "# conda activate r-env\n"
+                "python run.py $SLURM_ARRAY_TASK_ID\n"
+            )
+        })
+        collision = [f for f in _scan(root) if "same output path" in f.title]
+        self.assertEqual(collision, [])
+
     def test_literal_path_still_flagged(self) -> None:
         """A completely literal path (no $ at all) is the true positive case."""
         root = _make_project({

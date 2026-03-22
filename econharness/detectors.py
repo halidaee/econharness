@@ -932,7 +932,7 @@ _TASK_ID_PATTERN = re.compile(r"\$\{?SLURM_ARRAY_TASK_ID\}?")
 _OUTPUT_REDIRECT_PATTERN = re.compile(
     r"(?:>>?)\s*(\S+)"
     r"|(?:-o|--output(?:=|\s))(\S+)"
-    r"|(?:-e|--error(?:=|\s))(\S+)",
+    r"|(?:-e(?:=|\s)|--error(?:=|\s))(\S+)",
 )
 _DOCUMENTATION_COMMENT_PATTERN = re.compile(r"^\s*#(?!SBATCH)", re.MULTILINE)
 _NEARBY_WINDOW = 5  # lines above/below task ID usage to look for a comment
