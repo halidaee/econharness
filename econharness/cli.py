@@ -77,10 +77,15 @@ def create_parser() -> argparse.ArgumentParser:
     verify.add_argument("--profile", choices=["fast", "full"], default="fast")
     verify.add_argument("--from-scratch", action="store_true")
     verify.add_argument("--check-clean-tree", action="store_true")
+    verify.add_argument("--no-rollback", action="store_true", help="Skip automatic rollback on pipeline failure")
 
     init = subparsers.add_parser("init", help="Write a default config file")
     init.add_argument("--path", default=".")
     init.add_argument("--force", action="store_true")
+
+    restore_q = subparsers.add_parser("restore-quarantine", help="Restore artifacts from a quarantine directory")
+    restore_q.add_argument("--path", default=".")
+    restore_q.add_argument("--quarantine-dir", default=None, help="Quarantine directory timestamp to restore")
 
     review = subparsers.add_parser("review", help="Emit a heuristic research-structure review summary")
     review.add_argument("--path", default=".")
@@ -157,12 +162,15 @@ def main() -> None:
         return
 
     if args.command == "verify":
+        if getattr(args, "no_rollback", False):
+            print("Warning: rollback disabled. Project may be left in a broken state on pipeline failure.", file=sys.stderr)
         try:
             result = verify_project(
                 project_root,
                 args.profile,
                 from_scratch=args.from_scratch,
                 check_clean_tree=args.check_clean_tree,
+                no_rollback=getattr(args, "no_rollback", False),
             )
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
@@ -170,6 +178,8 @@ def main() -> None:
         print(f"Profile: {result.profile}")
         print(f"Command: {result.command}")
         print(f"Return code: {result.returncode}")
+        if result.rolled_back:
+            print("Pipeline failed — artifacts restored from quarantine.")
         if result.from_scratch:
             print("From scratch: yes")
             if result.quarantine_dir:
@@ -199,6 +209,38 @@ def main() -> None:
             sys.exit(2)
         config_path.write_text(render_default_config(), encoding="utf-8")
         print(f"Wrote {config_path}")
+        return
+
+    if args.command == "restore-quarantine":
+        from econharness.quarantine import QuarantineResult, delete_quarantine_dir, restore_quarantine
+        from econharness.state import state_dir
+        quarantine_base = state_dir(project_root) / "quarantine"
+        quarantine_dir_name = getattr(args, "quarantine_dir", None)
+        if not quarantine_dir_name:
+            if not quarantine_base.exists():
+                print("No quarantine directories found.", file=sys.stderr)
+                sys.exit(1)
+            dirs = sorted(d.name for d in quarantine_base.iterdir() if d.is_dir())
+            if not dirs:
+                print("No quarantine directories found.", file=sys.stderr)
+                sys.exit(1)
+            print("Available quarantine directories:")
+            for d in dirs:
+                print(f"  {d}")
+            print("\nSpecify one with --quarantine-dir <timestamp>")
+            sys.exit(0)
+        target_dir = quarantine_base / quarantine_dir_name
+        if not target_dir.exists():
+            print(f"Quarantine directory not found: {target_dir}", file=sys.stderr)
+            sys.exit(1)
+        moved_paths = tuple(
+            p.relative_to(target_dir).as_posix()
+            for p in target_dir.rglob("*")
+            if p.is_file()
+        )
+        qr = QuarantineResult(quarantine_dir=target_dir, moved_paths=moved_paths)
+        restore_quarantine(qr, project_root)
+        print(f"Restored {len(moved_paths)} artifact(s) from {quarantine_dir_name}")
         return
 
     if args.command == "review":

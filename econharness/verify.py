@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from econharness.config import load_config
-from econharness.quarantine import quarantine_generated_artifacts
+from econharness.quarantine import delete_quarantine_dir, quarantine_generated_artifacts, restore_quarantine
 
 
 @dataclass(slots=True)
@@ -26,6 +26,7 @@ class VerifyResult:
     clean_tree_after: bool | None = None
     git_status_before: tuple[str, ...] = ()
     git_status_after: tuple[str, ...] = ()
+    rolled_back: bool = False
 
 
 def _resolve_command(config: dict, profile: str) -> str:
@@ -42,6 +43,7 @@ def verify_project(
     *,
     from_scratch: bool = False,
     check_clean_tree: bool = False,
+    no_rollback: bool = False,
 ) -> VerifyResult:
     config = load_config(project_root)
     command = _resolve_command(config, profile)
@@ -51,6 +53,7 @@ def verify_project(
     git_status_before = _git_status(project_root) if check_clean_tree else None
     quarantine_dir: str | None = None
     moved_paths: tuple[str, ...] = ()
+    quarantine_result = None
     if from_scratch:
         quarantine_result = quarantine_generated_artifacts(project_root, config)
         quarantine_dir = str(quarantine_result.quarantine_dir)
@@ -72,6 +75,14 @@ def verify_project(
     missing_paths = tuple(path for path in moved_paths if path not in regenerated_paths)
     git_status_after = _git_status(project_root) if check_clean_tree else None
 
+    rolled_back = False
+    if from_scratch and quarantine_result is not None:
+        if completed.returncode != 0 and not no_rollback:
+            restore_quarantine(quarantine_result, project_root, regenerated_paths=regenerated_paths)
+            rolled_back = True
+        elif completed.returncode == 0:
+            delete_quarantine_dir(quarantine_result.quarantine_dir)
+
     return VerifyResult(
         profile=profile,
         command=command,
@@ -87,6 +98,7 @@ def verify_project(
         clean_tree_after=(not git_status_after) if isinstance(git_status_after, tuple) else None,
         git_status_before=git_status_before or (),
         git_status_after=git_status_after or (),
+        rolled_back=rolled_back,
     )
 
 
