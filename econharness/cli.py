@@ -22,7 +22,10 @@ def _resolve_path(path: str | None) -> Path:
 def _print_scan(result) -> None:
     print(f"Project: {result.project_root}")
     print(f"Strict score: {result.overall_score:.1f}")
+    suppressed = result.summary.get("suppressed", 0)
     print(f"Findings: {result.summary['findings']} ({result.summary['high_severity']} high)")
+    if suppressed:
+        print(f"Suppressed findings: {suppressed} (not counted in score)")
     print("Dimensions:")
     for key, score in result.dimension_scores.items():
         print(f"  {key}: {score:.1f}")
@@ -87,6 +90,15 @@ def create_parser() -> argparse.ArgumentParser:
     restore_q.add_argument("--path", default=".")
     restore_q.add_argument("--quarantine-dir", default=None, help="Quarantine directory timestamp to restore")
 
+    suppress_cmd = subparsers.add_parser("suppress", help="Manage finding suppressions")
+    suppress_cmd.add_argument("finding_id", nargs="?", default=None, help="Finding ID to suppress")
+    suppress_cmd.add_argument("--path", default=".")
+    suppress_cmd.add_argument("--reason", default=None)
+    suppress_cmd.add_argument("--expires", default=None, help="Duration like '90d' or '1y'")
+    suppress_cmd.add_argument("--list", action="store_true", dest="list_suppressions")
+    suppress_cmd.add_argument("--remove", default=None, metavar="FINDING_ID")
+    suppress_cmd.add_argument("--json", action="store_true", help="Emit JSON output")
+
     check_config = subparsers.add_parser("check-config", help="Validate the .econharness.yml config file")
     check_config.add_argument("--path", default=".")
     check_config.add_argument("--json", action="store_true", help="Emit JSON output")
@@ -110,6 +122,90 @@ def main() -> None:
         return
 
     project_root = _resolve_path(getattr(args, "path", "."))
+
+    if args.command == "suppress":
+        from econharness.suppressions import (
+            active_suppressed_ids, is_active, load_suppressions,
+            parse_duration, save_suppressions,
+        )
+        suppressions = load_suppressions(project_root)
+
+        if args.list_suppressions:
+            if args.json:
+                items = []
+                for fid, entry in suppressions.items():
+                    items.append({
+                        "id": fid,
+                        "reason": entry.get("reason"),
+                        "expires": entry.get("expires"),
+                        "suppressed_at": entry.get("suppressed_at"),
+                        "status": "active" if is_active(entry) else "expired",
+                    })
+                print(json.dumps(items))
+            else:
+                if not suppressions:
+                    print("No suppressions.")
+                for fid, entry in suppressions.items():
+                    status = "active" if is_active(entry) else "expired"
+                    reason = entry.get("reason", "")
+                    expires = entry.get("expires", "never")
+                    print(f"{fid}  [{status}]  expires={expires}  {reason}")
+            return
+
+        if args.remove:
+            if args.remove not in suppressions:
+                if args.json:
+                    print(json.dumps({"error": f"Suppression not found: {args.remove}"}))
+                    sys.exit(1)
+                print(f"No suppression found for: {args.remove}", file=sys.stderr)
+                sys.exit(1)
+            del suppressions[args.remove]
+            save_suppressions(project_root, suppressions)
+            if args.json:
+                print(json.dumps({"removed": args.remove}))
+            else:
+                print(f"Removed suppression: {args.remove}")
+            return
+
+        if not args.finding_id:
+            if args.json:
+                print(json.dumps({"error": "Provide a finding ID or --list / --remove"}))
+                sys.exit(1)
+            print("Provide a finding ID to suppress, or use --list / --remove.", file=sys.stderr)
+            sys.exit(1)
+
+        # Validate finding ID exists in current state (warn only)
+        state = load_state(project_root)
+        if state:
+            known_ids = {f["id"] for f in state.get("findings", [])}
+            if args.finding_id not in known_ids:
+                msg = f"Warning: finding ID '{args.finding_id}' not found in current scan state (may appear after next scan)"
+                if args.json:
+                    print(msg, file=sys.stderr)
+                else:
+                    print(msg)
+
+        from datetime import date as _date
+        entry: dict = {"suppressed_at": _date.today().isoformat()}
+        if args.reason:
+            entry["reason"] = args.reason
+        if args.expires:
+            try:
+                expiry = parse_duration(args.expires)
+                entry["expires"] = expiry.isoformat()
+            except ValueError as exc:
+                if args.json:
+                    print(json.dumps({"error": str(exc)}))
+                else:
+                    print(str(exc), file=sys.stderr)
+                sys.exit(1)
+        suppressions[args.finding_id] = entry
+        save_suppressions(project_root, suppressions)
+        if args.json:
+            print(json.dumps({"suppressed": args.finding_id, **entry}))
+        else:
+            print(f"Suppressed: {args.finding_id}")
+        return
 
     if args.command == "check-config":
         from econharness.config_validator import validate_config_path
