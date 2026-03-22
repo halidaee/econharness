@@ -647,41 +647,160 @@ def detect_raw_data_writes(project_root: Path, config: dict, files: list[Path]) 
     return findings
 
 
+SUBMISSION_SCRIPT_SUFFIXES = {".sh", ".slurm", ".job"}
+# Matches: module load R/4.3.1  |  ml R/4.3.1  |  module load R  |  ml R
+# Also handles multi-module lines: module load R/4.3.1 gcc/12.2
+# Anchored to start of line (with MULTILINE) so .+ stops at end of line.
+_MODULE_LOAD_PATTERN = re.compile(
+    r"^[ \t]*(?:module\s+load|ml)\s+(.+?)[ \t]*$",
+    re.MULTILINE,
+)
+# Matches an individual module token: name (with optional /version)
+_MODULE_ITEM_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9_\-+.]*)(?:/([A-Za-z0-9._\-]+))?")
+
+
+def _collect_module_loads(files: list[Path]) -> dict[str, dict]:
+    """Collect module load statements from submission scripts.
+
+    Returns:
+        {
+          "pinned":   {module_name: {version: [Path, ...]}},
+          "unpinned": {module_name: [Path, ...]},
+        }
+    """
+    pinned: dict[str, dict[str, list[Path]]] = defaultdict(lambda: defaultdict(list))
+    unpinned: dict[str, list[Path]] = defaultdict(list)
+    for path in files:
+        if path.suffix not in SUBMISSION_SCRIPT_SUFFIXES:
+            continue
+        text = _read_text(path)
+        for load_match in _MODULE_LOAD_PATTERN.finditer(text):
+            modules_str = load_match.group(1)
+            for item_match in _MODULE_ITEM_PATTERN.finditer(modules_str):
+                name = item_match.group(1)
+                version = item_match.group(2)
+                if version:
+                    pinned[name][version].append(path)
+                else:
+                    unpinned[name].append(path)
+    return {"pinned": dict(pinned), "unpinned": dict(unpinned)}
+
+
 def detect_environment_reproducibility(project_root: Path, config: dict, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
-    suffixes = {path.suffix.lower() for path in files}
     has_r = any(path.suffix.lower() in {".r", ".qmd", ".rmd"} for path in files)
     has_python = any(path.suffix.lower() == ".py" for path in files)
     env_config = config.get("environment", {})
+    module_data = _collect_module_loads(files)
+    pinned = module_data["pinned"]
+    unpinned = module_data["unpinned"]
+
+    # R lockfile check (with module load downgrade logic)
     if has_r:
         lockfiles = env_config.get("r", {}).get("lockfiles", ["renv.lock"])
         if not any((project_root / lockfile).exists() for lockfile in lockfiles):
-            findings.append(
-                make_finding(
-                    dimension="environment_reproducibility",
-                    severity="medium",
-                    title="Missing R environment lockfile",
-                    detail="R or Quarto files are present, but no declared R lockfile such as `renv.lock` was found.",
-                    remediation="Adopt `renv` or another declared lockfile-backed R environment manager.",
-                    score_impact=12,
+            r_pinned = pinned.get("R", {})
+            if r_pinned:
+                findings.append(
+                    make_finding(
+                        dimension="environment_reproducibility",
+                        severity="low",
+                        title="R environment pinned via module load but no renv.lock",
+                        detail=(
+                            "R files are present. Version-pinned `module load R/...` statements were found "
+                            "in submission scripts, which satisfies cluster reproducibility. "
+                            "An `renv.lock` would additionally cover local development."
+                        ),
+                        remediation=(
+                            "Consider adopting `renv` for local development reproducibility. "
+                            "The module load already handles cluster execution."
+                        ),
+                        score_impact=5,
+                    )
                 )
-            )
+            else:
+                findings.append(
+                    make_finding(
+                        dimension="environment_reproducibility",
+                        severity="medium",
+                        title="Missing R environment lockfile",
+                        detail="R or Quarto files are present, but no declared R lockfile such as `renv.lock` was found.",
+                        remediation="Adopt `renv` or another declared lockfile-backed R environment manager.",
+                        score_impact=12,
+                    )
+                )
+
+    # Python lockfile check (with module load downgrade logic)
     if has_python:
         lockfiles = env_config.get("python", {}).get("lockfiles", ["pixi.lock"])
         py_manager = env_config.get("python", {}).get("manager", "pixi")
         manager_hint = project_root / "pixi.toml"
         has_declared_lock = any((project_root / lockfile).exists() for lockfile in lockfiles)
         if not has_declared_lock or (py_manager == "pixi" and not manager_hint.exists()):
+            py_pinned = {k: v for k, v in pinned.items() if k.lower() in ("python", "python3")}
+            if py_pinned:
+                findings.append(
+                    make_finding(
+                        dimension="environment_reproducibility",
+                        severity="low",
+                        title="Python environment pinned via module load but no pixi.lock",
+                        detail=(
+                            "Python files are present. Version-pinned `module load python/...` statements were found "
+                            "in submission scripts. A `pixi.lock` would additionally cover local development."
+                        ),
+                        remediation="Consider adopting `pixi` for local development reproducibility.",
+                        score_impact=5,
+                    )
+                )
+            else:
+                findings.append(
+                    make_finding(
+                        dimension="environment_reproducibility",
+                        severity="medium",
+                        title="Missing Python reproducible environment metadata",
+                        detail="Python files are present, but no declared lockfile-backed environment such as `pixi.toml` + `pixi.lock` was found.",
+                        remediation="Adopt `pixi` or another declared lockfile-backed Python environment manager.",
+                        score_impact=12,
+                    )
+                )
+
+    # Unpinned module loads (distinct medium finding, fires regardless of lockfile)
+    for module_name, paths_list in unpinned.items():
+        example = paths_list[0].name
+        findings.append(
+            make_finding(
+                dimension="environment_reproducibility",
+                severity="medium",
+                title=f"Module loaded without version pin: `{module_name}`",
+                detail=(
+                    f"`module load {module_name}` (no version) found in submission scripts "
+                    f"(e.g. `{example}`). The loaded version is cluster-default and may change silently."
+                ),
+                remediation=f"Pin the version explicitly: `module load {module_name}/<version>`.",
+                score_impact=8,
+            )
+        )
+
+    # Version inconsistency across scripts (high severity, applies to any module)
+    for module_name, version_map in pinned.items():
+        if len(version_map) > 1:
+            version_summary = ", ".join(
+                f"`{v}` ({p[0].name})" for v, p in sorted(version_map.items())
+            )
             findings.append(
                 make_finding(
                     dimension="environment_reproducibility",
-                    severity="medium",
-                    title="Missing Python reproducible environment metadata",
-                    detail="Python files are present, but no declared lockfile-backed environment such as `pixi.toml` + `pixi.lock` was found.",
-                    remediation="Adopt `pixi` or another declared lockfile-backed Python environment manager.",
+                    severity="high",
+                    title=f"Module version inconsistent across scripts: `{module_name}`",
+                    detail=(
+                        f"Different scripts load different versions of `{module_name}`: "
+                        f"{version_summary}. Results depend on which script ran."
+                    ),
+                    remediation=f"Standardize all submission scripts to load the same version of `{module_name}`.",
                     score_impact=12,
                 )
             )
+
     return findings
 
 
