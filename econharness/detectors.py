@@ -130,6 +130,24 @@ def make_finding(
     )
 
 
+def detect_ambiguous_pipeline(project_root: Path, config: dict) -> list[Finding]:
+    from econharness.config import ENTRY_POINT_COMMANDS
+    found = [ep for ep in ENTRY_POINT_COMMANDS if (project_root / ep).exists()]
+    if len(found) >= 2:
+        return [make_finding(
+            dimension="automation",
+            severity="high",
+            title="Ambiguous authoritative pipeline",
+            detail=(
+                f"Multiple pipeline entry points found: {', '.join(found)}. "
+                "It is unclear which is the single source of truth for the full pipeline."
+            ),
+            remediation="Designate one authoritative pipeline entry point and remove or subordinate the others.",
+            score_impact=8.0,
+        )]
+    return []
+
+
 def iter_project_files(project_root: Path, exclude_patterns: list[str]) -> Iterable[Path]:
     excludes = tuple(exclude_patterns)
     for path in project_root.rglob("*"):

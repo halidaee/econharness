@@ -61,10 +61,12 @@ class ConfigSchemaTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            payload = json.loads((project / ".econharness.yml").read_text(encoding="utf-8"))
-            self.assertIn("stages", payload)
-            self.assertEqual(payload["stages"], [])
-            self.assertNotIn("heavy_stages", payload["pipeline"])
+            # init now writes YAML (loadable via load_config)
+            from econharness.config import load_config
+            config = load_config(project)
+            self.assertIn("stages", config)
+            self.assertEqual(config["stages"], [])
+            self.assertNotIn("heavy_stages", config["pipeline"])
 
 
 if __name__ == "__main__":

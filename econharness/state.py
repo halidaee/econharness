@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from econharness.models import Finding, ScanResult
+from econharness.scoring import compute_scores
+from econharness.suppressions import active_suppressed_ids
 
 
 def state_dir(project_root: Path) -> Path:
@@ -42,18 +44,33 @@ def findings_from_state(project_root: Path) -> list[Finding]:
     state = load_state(project_root)
     if not state:
         return []
+    suppressed = active_suppressed_ids(project_root)
     findings: list[Finding] = []
     for item in state.get("findings", []):
-        findings.append(Finding(**item))
+        finding = Finding(**item)
+        if finding.id not in suppressed:
+            findings.append(finding)
     return findings
 
 
 def scan_result_from_state(state: dict[str, Any]) -> ScanResult:
-    findings = [Finding(**item) for item in state.get("findings", [])]
+    # Determine project_root from state for suppression filtering
+    project_root = Path(state["project_root"])
+    suppressed = active_suppressed_ids(project_root)
+    all_findings = [Finding(**item) for item in state.get("findings", [])]
+    findings = [f for f in all_findings if f.id not in suppressed]
+    suppressed_count = len(all_findings) - len(findings)
+    # Recompute scores from filtered findings
+    dimension_scores, overall_score = compute_scores(findings)
+    summary = dict(state.get("summary", {}))
+    summary["findings"] = len(findings)
+    summary["high_severity"] = sum(1 for f in findings if f.severity == "high")
+    if suppressed_count:
+        summary["suppressed"] = suppressed_count
     return ScanResult(
         project_root=state["project_root"],
         findings=findings,
-        dimension_scores=state.get("dimension_scores", {}),
-        overall_score=float(state.get("overall_score", 0.0)),
-        summary=state.get("summary", {}),
+        dimension_scores=dimension_scores,
+        overall_score=overall_score,
+        summary=summary,
     )

@@ -71,6 +71,37 @@ def _validate_generated_roots(project_root: Path, config: dict) -> None:
             )
 
 
+def restore_quarantine(quarantine_result: QuarantineResult, project_root: Path, *, regenerated_paths: tuple[str, ...] = ()) -> None:
+    """Restore quarantined artifacts to their original locations.
+
+    Deletes any already-regenerated files first (partial build cleanup), then
+    moves each file from the quarantine dir back to its original path.
+    """
+    # Delete any partially-regenerated files at their original paths
+    for path in regenerated_paths:
+        target = project_root / path
+        if target.exists():
+            target.unlink()
+
+    # Move quarantined files back
+    quarantine_dir = quarantine_result.quarantine_dir
+    for rel_path in quarantine_result.moved_paths:
+        source = quarantine_dir / rel_path
+        dest = project_root / rel_path
+        if source.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(dest))
+
+    # Remove the now-empty quarantine dir
+    if quarantine_dir.exists():
+        shutil.rmtree(str(quarantine_dir), ignore_errors=True)
+
+
+def delete_quarantine_dir(quarantine_dir: Path) -> None:
+    if quarantine_dir.exists():
+        shutil.rmtree(str(quarantine_dir), ignore_errors=True)
+
+
 def _paths_overlap(left: Path, right: Path) -> bool:
     return _is_within(left, right) or _is_within(right, left)
 

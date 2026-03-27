@@ -6,6 +6,7 @@ from pathlib import Path
 
 from econharness.config import load_config
 from econharness.detectors import (
+    detect_ambiguous_pipeline,
     detect_artifact_traceability,
     detect_automation,
     detect_directory_structure,
@@ -37,6 +38,7 @@ def scan_project(project_root: Path) -> ScanResult:
     config = load_config(project_root)
     files = list(iter_project_files(project_root, config.get("exclude", [])))
     findings = []
+    findings.extend(detect_ambiguous_pipeline(project_root, config))
     findings.extend(detect_automation(project_root, config, files))
     findings.extend(detect_slow_stage_discipline(config))
     findings.extend(detect_manual_steps(project_root, files))
